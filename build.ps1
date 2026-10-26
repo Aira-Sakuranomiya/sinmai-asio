@@ -2,7 +2,9 @@
 param([string]$GameRoot='K:\SDEZ170\Package',[switch]$FetchDependencies,[switch]$ManagedOnly)
 $ErrorActionPreference='Stop'
 $root=$PSScriptRoot
-$out=Join-Path $root 'build'
+$release=Join-Path $root 'build'
+$out=Join-Path $root '.build'
+New-Item -ItemType Directory -Path $release -Force | Out-Null
 New-Item -ItemType Directory -Path $out -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $out 'fixtures') -Force | Out-Null
 $sdk=Join-Path $root 'third_party\asio-sdk\ASIOSDK'
@@ -64,11 +66,22 @@ $game=Join-Path $GameRoot 'Sinmai_Data\Managed'
 $csc=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $framework=Join-Path ${env:ProgramFiles(x86)} 'Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2'
 if(-not(Test-Path (Join-Path $framework 'mscorlib.dll'))){throw '.NET Framework 4.7.2 targeting pack is required'}
-$args=@('/nologo','/noconfig','/target:library','/platform:x64','/optimize+','/nostdlib+',('/out:'+(Join-Path $out 'SinmaiAsio.dll')))
+$args=@('/nologo','/noconfig','/target:library','/platform:x64','/optimize+','/nostdlib+',('/out:'+(Join-Path $release 'SinmaiAsio.dll')))
 foreach($dll in @('mscorlib.dll','System.dll','System.Core.dll')){$args+=('/reference:'+(Join-Path $framework $dll))}
 foreach($dll in @('MelonLoader.dll','0Harmony.dll','Tomlet.dll')){$args+=('/reference:'+(Join-Path $refs $dll))}
 foreach($dll in @('UnityEngine.dll','UnityEngine.CoreModule.dll','UnityEngine.IMGUIModule.dll')){$args+=('/reference:'+(Join-Path $game $dll))}
 $args+=@(Get-ChildItem (Join-Path $root 'managed') -Filter '*.cs' -File | ForEach-Object {$_.FullName})
 & $csc @args
 if($LASTEXITCODE -ne 0){throw 'Managed build failed'}
-if($ManagedOnly){Write-Host "Managed build passed: $out"}else{Write-Host "Build and native tests passed: $out"}
+$configurationTests=Join-Path $out 'configuration-tests.exe'
+$testArgs=@('/nologo','/noconfig','/target:exe','/platform:x64','/optimize+','/nostdlib+',('/out:'+$configurationTests))
+foreach($dll in @('mscorlib.dll','System.dll','System.Core.dll')){$testArgs+=('/reference:'+(Join-Path $framework $dll))}
+$testArgs+=('/reference:'+(Join-Path $refs 'Tomlet.dll'))
+$testArgs+=@((Join-Path $root 'managed\Configuration.cs'),(Join-Path $root 'tests\configuration_tests.cs'))
+& $csc @testArgs
+if($LASTEXITCODE -ne 0){throw 'Configuration tests build failed'}
+Copy-Item -LiteralPath (Join-Path $refs 'Tomlet.dll') -Destination $out -Force
+& $configurationTests
+if($LASTEXITCODE -ne 0){throw 'Configuration tests failed'}
+if(-not $ManagedOnly){Copy-Item -LiteralPath (Join-Path $out 'SinmaiAsio.Native.dll') -Destination (Join-Path $release 'SinmaiAsio.Native.dll') -Force}
+if($ManagedOnly){Write-Host "Managed build passed: $release"}else{Write-Host "Build and native tests passed: $release"}

@@ -1,26 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 using System;
 using System.IO;
-using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using HarmonyLib;
 using MelonLoader;
-using Tomlet;
 using UnityEngine;
-[assembly:MelonInfo(typeof(SinmaiAsio.Plugin),"Sinmai ASIO","0.1.1","sinmai-asio contributors")]
+[assembly:MelonInfo(typeof(SinmaiAsio.Plugin),"Sinmai ASIO","0.1.2","sinmai-asio contributors")]
 [assembly:MelonGame("sega-interactive","Sinmai")]
 namespace SinmaiAsio {
-    public sealed class Settings {
-        public bool Enabled=false;
-        public string Driver="Yamaha Steinberg USB ASIO";
-        public int BufferSamples=128;
-        public int LeftChannel=0;
-        public int RightChannel=1;
-        public bool Diagnostics=false;
-    }
     public sealed class Plugin:MelonMod {
         static Settings settings;
         static bool enabled,prepared,installed,started,failed,finalizing,nativeAttempted;
@@ -35,7 +25,9 @@ namespace SinmaiAsio {
             statisticsPath=Path.Combine(gameRoot,"UserData","SinmaiAsio.stats.json");
             try {
                 string file=Path.Combine(gameRoot,"SinmaiAsio.toml");
-                settings=File.Exists(file)?ReadSettings(File.ReadAllText(file)):new Settings();
+                bool created;
+                settings=Configuration.LoadOrCreate(file,Configuration.InstalledDrivers,out created);
+                if(created&&!settings.Enabled)MelonLogger.Warning("[SinmaiAsio] 已生成配置：未找到 ASIO 驱动或存在多个候选，请设置 Driver 并启用。 / Configuration created: no ASIO driver or multiple candidates; set Driver and Enabled manually.");
                 string experiment=Environment.GetEnvironmentVariable("SINMAI_ASIO_EXPERIMENT");
                 source=experiment=="capture"?3u:experiment=="clock"?4u:0u;
                 if(!string.IsNullOrEmpty(experiment)&&experiment!="capture"&&experiment!="clock")throw new InvalidOperationException("Unknown SINMAI_ASIO_EXPERIMENT");
@@ -58,11 +50,6 @@ namespace SinmaiAsio {
                 if(Native.SaGetAbiVersion()!=Native.Abi)throw new InvalidOperationException("Native ABI mismatch");
                 Diagnostic("Native exports bound; ASIO preparation deferred until game native modules load");
             } catch(Exception ex){Failure(ex);}
-        }
-        static Settings ReadSettings(string text) {
-            var method=typeof(TomletMain).GetMethods(BindingFlags.Static|BindingFlags.Public).First(m=>m.Name=="To"&&m.IsGenericMethodDefinition&&m.GetParameters().Length>=1&&m.GetParameters()[0].ParameterType==typeof(string));
-            var args=new object[method.GetParameters().Length];args[0]=text;
-            return (Settings)method.MakeGenericMethod(typeof(Settings)).Invoke(null,args);
         }
         static string FileHash(string path) {using(var sha=SHA256.Create())using(var file=File.OpenRead(path))return BitConverter.ToString(sha.ComputeHash(file)).Replace("-","");}
         void Patch(Type type,string name,string prefix,string postfix) {

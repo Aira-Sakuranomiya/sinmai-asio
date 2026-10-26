@@ -11,29 +11,50 @@
 | 平台 | Windows x64 |
 | 游戏 | Sinmai DX 1.70 的指定程序集与 CRI DLL |
 | 加载器 | MelonLoader 0.6.4，Mono 游戏 |
-| 声卡 | Steinberg UR22C，Yamaha Steinberg USB ASIO |
+| 已验证声卡 | Yamaha URX22C，Yamaha Steinberg USB ASIO |
 | 输出 | 48 kHz、双声道 |
 | 缓冲 | 32 / 64 / 128 samples，默认 128 |
 
 当前版本使用固定的 DLL 指纹和原生接口布局。**版本号相同也不代表二进制兼容**；不匹配的程序集或 CRI DLL 会被拒绝加载。已支持的指纹记录在 [dependencies.json](dependencies.json)。其他游戏版本、声卡与驱动尚需单独验证。
 
-UR22C 建议从 **128 samples / Low Latency** 开始。64 samples 在验证环境中出现过欠载，不保证更小缓冲能够稳定运行。缓冲大小只是延迟的一部分，不能直接视为实际出声延迟。
+插件不按声卡型号分别编译。**同一份 Windows x64 DLL 可以通过配置选择其他 ASIO 驱动，无需为换声卡重新编译。** 目前只对 URX22C 做过实机验证，其他设备能否使用取决于驱动的采样率、缓冲和输出格式支持。
+
+URX22C 建议从 **128 samples / Low Latency** 开始。64 samples 在验证环境中出现过欠载，不保证更小缓冲能够稳定运行。缓冲大小只是延迟的一部分，不能直接视为实际出声延迟。
 
 本插件不依赖 AquaMai 或 MuMod。与 AquaMai 同时使用时，其音量和声道路由设置仍在输出前生效；最终输出由本插件接管。
 
 ## 安装
 
-先安装声卡厂商提供的 **64 位原生 ASIO 驱动**，并关闭游戏。
+运行游戏的电脑需要装好 MelonLoader，以及声卡厂商提供的 **64 位原生 ASIO 驱动**。插件可以使用编译好的文件，也可以从源码自行编译；两种方式最终安装的 DLL 相同。
 
-使用发布的安装包，或先按下文从源码构建。在项目 / 安装包目录运行：
+### 方式一：使用编译好的文件
+
+下载并解压发布包，取出以下两个文件即可，无需安装 Visual Studio、Windows SDK 或 ASIO SDK：
+
+- `build/SinmaiAsio.dll`
+- `build/SinmaiAsio.Native.dll`
+
+随后按下文“复制到游戏目录”放置文件并配置。
+
+GitHub 自动生成的 **Source code** 压缩包只有源码，不包含编译好的 DLL；使用它需要按方式二自行编译。
+
+### 方式二：从源码编译
+
+编译电脑需要 PowerShell、Visual Studio C++ x64 构建工具、Windows SDK、.NET Framework 4.7.2 Targeting Pack，以及用于编译引用和校验的游戏 / MelonLoader 依赖文件。**仅编译不需要连接声卡或安装 ASIO 驱动。**
+
+下载或克隆源码，在项目根目录执行以下命令，将示例路径替换为实际游戏目录：
 
 ```powershell
-.\install.ps1 -GameRoot "D:\Games\Sinmai\Package"
+.\build.ps1 -GameRoot "D:\Games\Sinmai\Package" -FetchDependencies
 ```
 
-脚本会安装插件，保留已有的 `SinmaiAsio.toml`，并备份被替换的插件文件。没有配置文件时，会从示例创建一份，初始 `Enabled = false`。
+首次构建会下载并校验 ASIO SDK 和 MinHook。构建成功后，安装时同样只需取出 `build/SinmaiAsio.dll` 和 `build/SinmaiAsio.Native.dll`。`build/` 只保留这两个运行文件；编译中间文件、测试程序和驱动探测工具位于 `.build/`，不需要安装。
 
-也可以手动放置文件：
+更详细的构建依赖和开发工具见[从源码构建](#从源码构建)。
+
+### 复制到游戏目录
+
+关闭游戏，将两个 DLL 按以下目录放置；缺少的文件夹需自行创建。升级前可备份旧 DLL，并保留已有配置。
 
 ```text
 游戏目录/
@@ -45,12 +66,20 @@ UR22C 建议从 **128 samples / Low Latency** 开始。64 samples 在验证环�
 └── SinmaiAsio.toml
 ```
 
-手动安装时，将 `build/` 中的两个 DLL 放入对应位置，将 `SinmaiAsio.example.toml` 复制为游戏目录下的 `SinmaiAsio.toml`。升级时保留自己的配置。
+**首次加载会自动在游戏目录生成 `SinmaiAsio.toml`，只复制两个 DLL 即可。** 已有配置不会被覆盖，也不会重新选择驱动。
 
-启动游戏前：
+首次自动选择规则：
 
-1. 在 ASIO 驱动面板中设置 **48 kHz** 和所需缓冲大小。UR22C 建议使用 **128 samples / Low Latency**。
-2. 在 `SinmaiAsio.toml` 中设置相同的 `BufferSamples`，并将 `Enabled` 改为 `true`。
+- 存在 `Yamaha Steinberg USB ASIO`：优先选择并启用。
+- 没有上述驱动，但只有一个已注册的 64 位 ASIO 驱动：选择并启用该驱动。
+- 没有驱动，或存在多个其他候选：生成禁用配置并记录提示，需手动填写 `Driver` 并启用。
+
+默认使用 48 kHz、128 samples、输出通道 0 / 1。驱动面板仍需预先设置为相同采样率和缓冲大小；自动选择驱动不会修改驱动面板。不匹配时会明确报错。需要预先配置时，可复制 `SinmaiAsio.example.toml` 并重命名，也可按照下文手动创建。
+
+### 配置并启用
+
+1. 在 ASIO 驱动面板中设置 **48 kHz** 和所需缓冲大小。URX22C 建议使用 **128 samples / Low Latency**。
+2. 自动选择到正确驱动且使用默认设置时，无需手动创建配置。需要自定义时，编辑 `SinmaiAsio.toml`，设置 `Driver`、`BufferSamples` 和输出通道，确保 `Enabled = true`。
 3. 启动游戏。正常情况下，日志会输出一条 ASIO 启动信息。
 
 驱动面板与配置的缓冲大小必须一致；插件不会自动修改驱动设置或增大缓冲。配置修改后需重启游戏。
@@ -68,14 +97,28 @@ Diagnostics = false
 
 | 配置项 | 默认值 | 说明 |
 | --- | --- | --- |
-| `Enabled` | `false` | 启用 ASIO 输出 |
-| `Driver` | `"Yamaha Steinberg USB ASIO"` | 已安装的 64 位 ASIO 驱动注册名称，不是 Windows 播放设备名称 |
+| `Enabled` | 自动选择到驱动时为 `true` | 启用 ASIO 输出；未找到唯一候选时为 `false` |
+| `Driver` | 首次加载时自动选择 | 已安装的 64 位 ASIO 驱动注册名称，不是 Windows 播放设备名称 |
 | `BufferSamples` | `128` | 缓冲大小，可选 `32`、`64`、`128`；须与驱动面板一致 |
 | `LeftChannel` | `0` | 左声道输出通道，从 0 开始编号 |
 | `RightChannel` | `1` | 右声道输出通道，从 0 开始编号，不能与左声道相同 |
 | `Diagnostics` | `false` | 开启详细日志和统计文件，仅排查问题时使用 |
 
-采样率固定为 48 kHz，不进行实时重采样。声卡输出格式由驱动报告，不支持的格式会明确报错。
+采样率固定为 48 kHz，不进行实时重采样。目前支持小端 16 / 24 / 32 位整数 PCM，以及 32 / 64 位浮点格式；部分带有效位对齐的整数格式、DSD 和大端格式尚不支持。声卡格式由驱动报告，不支持的格式会明确报错。
+
+### 更换声卡
+
+在运行游戏的电脑上安装目标声卡的 64 位 ASIO 驱动，然后修改 `Driver`、输出通道及缓冲设置即可，不需要重新编译插件。
+
+可以在 **64 位 PowerShell** 中查看已注册的 ASIO 驱动名称：
+
+```powershell
+Get-ChildItem 'HKLM:\SOFTWARE\ASIO' | Select-Object -ExpandProperty PSChildName
+```
+
+将目标名称填入 `Driver`，在驱动面板中设置 48 kHz，并选择驱动支持的 `32`、`64` 或 `128` samples。`BufferSamples` 必须与之匹配，`LeftChannel` / `RightChannel` 必须是有效且不同的输出通道。
+
+更换声卡不会改变游戏版本限制：游戏程序集和 CRI DLL 仍须匹配当前支持的指纹。
 
 ### 欠载与错误处理
 
@@ -108,33 +151,35 @@ Diagnostics = false
 
 ## 从源码构建
 
-需要：
+**编译不需要连接声卡或安装 ASIO 驱动。** ASIO SDK 是编译依赖，声卡驱动是运行依赖。仅运行 `asio-probe.exe` 或在游戏中实际启用输出时，才需要目标声卡及其驱动。
+
+构建机器需要：
 
 - PowerShell
 - Visual Studio C++ x64 构建工具及 Windows SDK
 - .NET Framework 4.7.2 Targeting Pack
-- 本地游戏与 MelonLoader 文件，用作编译引用
+- 受支持的 CRI DLL，以及 Unity / MelonLoader 依赖文件，用于编译引用和本地接口校验
 
 ```powershell
 .\build.ps1 -GameRoot "D:\Games\Sinmai\Package" -FetchDependencies
 ```
 
-首次构建会下载固定版本的 ASIO SDK 和 MinHook，校验 SHA256 后解包。版本、来源和校验值见 [dependencies.json](dependencies.json)。构建产物位于 `build/`；构建流程同时运行音频转换 / 缓冲测试及 CRI 指纹 / Hook 撤销测试，不会启动游戏。
+首次构建会下载固定版本的 ASIO SDK 和 MinHook，校验 SHA256 后解包。版本、来源和校验值见 [dependencies.json](dependencies.json)。`build/` 仅包含两个运行 DLL；`.build/` 存放编译中间文件、测试程序和探测工具。构建流程同时运行音频转换 / 缓冲、CRI 指纹 / Hook 撤销及首次配置生成测试，不会启动游戏。
 
 独立驱动探测工具：
 
 ```powershell
 # 检查驱动、声道、格式和缓冲支持
-.\build\asio-probe.exe --buffer 128
+.\.build\asio-probe.exe --buffer 128
 
 # 运行 10 秒静音输出
-.\build\asio-probe.exe --buffer 128 --silence 10
+.\.build\asio-probe.exe --buffer 128 --silence 10
 
 # 播放 3 秒低音量 440 Hz 测试音
-.\build\asio-probe.exe --buffer 128 --tone 3
+.\.build\asio-probe.exe --buffer 128 --tone 3
 ```
 
-生成包含二进制、源码和许可证的安装包：
+生成包含二进制、源码、配置示例和许可证的发布包：
 
 ```powershell
 .\package.ps1
@@ -164,4 +209,4 @@ Diagnostics = false
 - MinHook：BSD-2-Clause。
 - MelonLoader、Harmony、Tomlet 及 Unity 程序集由本地游戏环境提供，不随本项目分发。
 
-安装包保留相关依赖的许可证。ASIO 名称与标识的使用仍须遵守 Steinberg 的商标规范。本项目不包含游戏文件或声卡驱动。
+发布包保留相关依赖的许可证。ASIO 名称与标识的使用仍须遵守 Steinberg 的商标规范。本项目不包含游戏文件或声卡驱动。

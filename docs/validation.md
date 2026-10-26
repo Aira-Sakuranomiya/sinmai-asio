@@ -13,7 +13,7 @@ for the logging cleanup. Developer capture/clock tools remain optional and inact
 ## Environment
 
 - Sinmai 1.70, MelonLoader 0.6.4, Unity 2018.4.7f1, Windows x64.
-- Steinberg UR22C; Yamaha Steinberg USB ASIO, 48 kHz, Low Latency.
+- Yamaha URX22C; Yamaha Steinberg USB ASIO, 48 kHz, Low Latency.
 - Driver initially fixed its supported buffer to 256 samples. The official control panel was changed
   to 64 for investigation and finally 128 for the accepted run. This setting persists outside the game;
   original value was 256. The plugin configuration is also 128. The user's speaker routing is preserved.
@@ -68,3 +68,9 @@ for the logging cleanup. Developer capture/clock tools remain optional and inact
 `UserData/SinmaiAsio.stats.json` holds the latest aggregate; `tools/summarize-stats.ps1` summarizes it.
 Histogram overflow bucket 63 is a lower bound, not a precise 16 ms measurement. All reported software
 waiting and driver latency must stay labeled separately from physical/acoustic latency.
+
+## 0.1.2 configuration and build-layout validation
+
+- First-load configuration tests passed: single/preferred driver selection, missing/ambiguous driver handling, TOML escaping, existing disabled/custom settings preservation, and malformed settings rejection without overwrite.
+- Native audio and CRI profile/hook restoration tests passed after moving developer outputs to .build/. Runtime build/ contains exactly SinmaiAsio.dll and SinmaiAsio.Native.dll.
+- These changes were built and tested outside the game. The first-load path has not been exercised under Unity Mono in-game; installed game files and existing settings were left unchanged.
