@@ -1,0 +1,19 @@
+{
+  "asioSdk": {
+    "version": "2.3.4",
+    "url": "https://download.steinberg.net/sdk_downloads/ASIO-SDK_2.3.4_2025-10-15.zip",
+    "sha256": "D5EBF0C20DD2C5F43771FD0C1418F4B361BF52434EE670097CFA6B3A335E2ECA",
+    "licenseChoice": "GPL-3.0-only"
+  },
+  "minhook": {
+    "version": "1.3.4",
+    "url": "https://github.com/TsudaKageyu/minhook/archive/refs/tags/v1.3.4.zip",
+    "sha256": "172708123DAA0C98D20D3A980B16A50BE14AF243DC95DEE6F79C24193AD010E4",
+    "license": "BSD-2-Clause"
+  },
+  "game": {
+    "version": "1.70",
+    "assemblySha256": "DC0E46A4133D4EE4781BA6DEB2FE30063DD3F82EE91C31A5A8A7E61E644D9446",
+    "criSha256": "1F6555296765D4B7D8AB1BCD5C8D44F515764933B6149D42330A44A872C402C3"
+  }
+}

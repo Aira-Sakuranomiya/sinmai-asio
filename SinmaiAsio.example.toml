@@ -1,0 +1,12 @@
+# 启用 ASIO 输出。驱动面板的采样率和缓冲须与本配置一致。
+# Enable ASIO output. Match the driver panel to 48000 Hz and BufferSamples.
+Enabled = false
+Driver = "Yamaha Steinberg USB ASIO"
+# 此 UR22C 实机验证使用 128；64 samples 曾欠载。驱动面板须同步设置。
+# Tested UR22C setting: 128. Match the ASIO driver control panel.
+BufferSamples = 128
+LeftChannel = 0
+RightChannel = 1
+# 仅排查问题时开启：每 5 秒写入统计文件并输出诊断日志。
+# Troubleshooting only: write statistics and diagnostic logs every 5 seconds.
+Diagnostics = false
