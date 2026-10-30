@@ -16,7 +16,7 @@ int main(int argc,char** argv) {
         else if(!strcmp(argv[i],"--right")&&i+1<argc)o.right=unsigned(atoi(argv[++i]));
         else if(!strcmp(argv[i],"--silence")&&i+1<argc)seconds=unsigned(atoi(argv[++i]));
         else if(!strcmp(argv[i],"--tone")&&i+1<argc){seconds=unsigned(atoi(argv[++i]));o.source=2;}
-        else {fprintf(stderr,"Usage: asio-probe [--driver name] [--buffer 32|64|128] [--left index] [--right index] [--silence seconds | --tone seconds]\n");return 2;}
+        else {fprintf(stderr,"Usage: asio-probe [--driver name] [--buffer 32|48|64|96|128|192|256|384|512|768|1024|1536|2048] [--left index] [--right index] [--silence seconds | --tone seconds]\n");return 2;}
     }
     if(seconds>1800){fprintf(stderr,"Duration must be <=1800 seconds\n");return 2;}
     char text[2048]{};int status=SaInitialize(&o);

@@ -6,6 +6,7 @@ Enabled = true
 Driver = "Yamaha Steinberg USB ASIO"
 # URX22C 实机验证使用 128；64 samples 曾欠载。驱动面板须同步设置。
 # Tested URX22C setting: 128. Match the ASIO driver control panel.
+# 可选 / Allowed: 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048
 BufferSamples = 128
 LeftChannel = 0
 RightChannel = 1

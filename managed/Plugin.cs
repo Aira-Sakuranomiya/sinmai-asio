@@ -8,7 +8,7 @@ using System.Text;
 using HarmonyLib;
 using MelonLoader;
 using UnityEngine;
-[assembly:MelonInfo(typeof(SinmaiAsio.Plugin),"Sinmai ASIO","0.1.2","sinmai-asio contributors")]
+[assembly:MelonInfo(typeof(SinmaiAsio.Plugin),"Sinmai ASIO","0.1.3","Aira-Sakuranomiya")]
 [assembly:MelonGame("sega-interactive","Sinmai")]
 namespace SinmaiAsio {
     public sealed class Plugin:MelonMod {
@@ -33,7 +33,7 @@ namespace SinmaiAsio {
                 if(!string.IsNullOrEmpty(experiment)&&experiment!="capture"&&experiment!="clock")throw new InvalidOperationException("Unknown SINMAI_ASIO_EXPERIMENT");
                 enabled=settings.Enabled||source!=0;
                 if(!enabled){MelonLogger.Msg("[SinmaiAsio] Disabled / 已禁用");return;}
-                if(settings.BufferSamples!=32&&settings.BufferSamples!=64&&settings.BufferSamples!=128)throw new InvalidOperationException("BufferSamples must be 32, 64, or 128");
+                if(settings.BufferSamples!=32&&settings.BufferSamples!=48&&settings.BufferSamples!=64&&settings.BufferSamples!=96&&settings.BufferSamples!=128&&settings.BufferSamples!=192&&settings.BufferSamples!=256&&settings.BufferSamples!=384&&settings.BufferSamples!=512&&settings.BufferSamples!=768&&settings.BufferSamples!=1024&&settings.BufferSamples!=1536&&settings.BufferSamples!=2048)throw new InvalidOperationException("BufferSamples must be 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, or 2048");
                 if(settings.LeftChannel<0||settings.RightChannel<0||settings.LeftChannel==settings.RightChannel||string.IsNullOrWhiteSpace(settings.Driver)||settings.Driver.Length>126)throw new InvalidOperationException("Invalid ASIO driver or output channels");
                 string managed=Path.Combine(gameRoot,"Sinmai_Data","Managed");
                 if(FileHash(Path.Combine(managed,"Assembly-CSharp.dll"))!=GameHash)throw new InvalidOperationException("Unsupported game assembly; only the validated 1.70 profile is allowed");
@@ -122,7 +122,6 @@ namespace SinmaiAsio {
         static void Diagnostic(string message){if(settings!=null&&settings.Diagnostics)MelonLogger.Msg("[SinmaiAsio] "+message);}
         static string FaultReason(uint code){
             switch(code){
-                case 1:return "音频欠载（"+settings.BufferSamples+" samples），请检查缓冲设置后重启。 / ASIO underrun; check buffer settings and restart.";
                 case 2:return "声卡驱动请求重置，请重启游戏。 / Driver reset requested; restart the game.";
                 case 3:return "采样率发生变化，请恢复 48000 Hz 后重启。 / Sample rate changed; restore 48000 Hz and restart.";
                 case 8:return "声卡回调中断，请检查连接后重启。 / Audio callbacks stalled; check the connection and restart.";

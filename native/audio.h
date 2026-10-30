@@ -8,6 +8,7 @@
 #include <cstring>
 
 namespace sa {
+constexpr unsigned MaxBufferSamples=2048;
 inline unsigned sample_bytes(int type) noexcept {
     switch(type) { case 16:return 2;case 17:return 3;case 18:case 19:return 4;case 20:return 8;default:return 0; }
 }
@@ -27,7 +28,7 @@ inline void encode(float value, int type, void* destination) noexcept {
 struct Frame { float l=0, r=0; int64_t timestamp=0; };
 // One producer (CRI server), one consumer (ASIO); capacity is the selected block size.
 class Ring {
-    std::array<Frame,128> data_{};
+    std::array<Frame,MaxBufferSamples> data_{};
     alignas(64) std::atomic<uint64_t> read_{0};
     alignas(64) std::atomic<uint64_t> write_{0};
     unsigned capacity_=64;

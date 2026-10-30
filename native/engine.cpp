@@ -28,6 +28,7 @@ constexpr char CriHash[]="1F6555296765D4B7D8AB1BCD5C8D44F515764933B6149D42330A44
 struct Engine {
     SaOptions options{};
     sa::Ring ring;
+    std::array<sa::Frame,sa::MaxBufferSamples> callbackBlock{};
     std::mutex messageMutex;
     std::string error,driverInfo;
     std::atomic<unsigned> state{0},fault{0},inflight{0};
@@ -53,8 +54,6 @@ struct Engine {
     int64_t frequency=0;
     unsigned tonePhase=0;
     float tone[48000]{};
-    int64_t underruns[3]{};
-    unsigned underrunIndex=0;
     unsigned char* cri=nullptr;
     void* originalBackend=nullptr;
     void* customBackend[38]{};
@@ -84,7 +83,7 @@ void process(long index,ASIOBool) noexcept {
     const auto begin=ticks();e.lastAsio=begin;e.asioThread=GetCurrentThreadId();
     const bool active=e.accepting.load(std::memory_order_acquire);
     unsigned missing=0,audibleOutput=0;
-    sa::Frame block[128]{};unsigned available=0;
+    auto* block=e.callbackBlock.data();unsigned available=0;
     if(active&&(e.options.source==0||e.options.source==4)) {
         available=e.ring.take(block,e.options.frames);missing=e.options.frames-available;
         // Publish room for the complete next block once, then request rendering. Never wait here.
@@ -94,7 +93,7 @@ void process(long index,ASIOBool) noexcept {
         sa::Frame frame{};
         if(active) {
             if(e.options.source==0||e.options.source==4) {
-                frame=block[i];
+                if(i<available)frame=block[i];
                 if(i<available&&frame.timestamp)++e.wait[bucket(begin-frame.timestamp)];
             } else if(e.options.source==2) {
                 frame.l=frame.r=e.tone[e.tonePhase];e.tonePhase=(e.tonePhase+440)%48000;
@@ -109,14 +108,12 @@ void process(long index,ASIOBool) noexcept {
     }
     if(active) {
         ++e.callbacks;e.frames+=e.options.frames;e.outputNonzero+=audibleOutput;
-        // Startup allows the CRI server to begin; warmup misses remain visible in statistics.
+        // Missing frames are silence for this callback only. Keep the driver and render worker
+        // running so PCM resumes on the next callback with available data; never latch a fault.
+        // Preserve the one-second warmup distinction for diagnostics without per-underrun logs.
         if(missing) {
             e.missing+=missing;
-            if(begin-e.startTick>e.frequency) {
-                e.missingAfterWarmup+=missing;
-                e.underruns[e.underrunIndex++%3]=begin;
-                if(e.underrunIndex>=3 && begin-e.underruns[e.underrunIndex%3]<10*e.frequency)fail(1);
-            }
+            if(begin-e.startTick>e.frequency)e.missingAfterWarmup+=missing;
         }
     }
     if(e.outputReady)e.driver->outputReady();
@@ -195,7 +192,7 @@ DWORD WINAPI worker(void*) {
         const auto op=signaled==WAIT_OBJECT_0?e.operation.exchange(0):0;
         try {
             if(e.started && ticks()-e.lastAsio.load()>e.frequency)fail(8);
-            if(e.fault && e.started){stop_driver();e.state=4;set_error("ASIO stopped: fault="+std::to_string(e.fault.load())+" (1=underrun,2=reset,3=rate change,4=CRI format,5=driver callback,6=CRI thread)");}
+            if(e.fault && e.started){stop_driver();e.state=4;set_error("ASIO stopped: fault="+std::to_string(e.fault.load())+" (2=reset,3=rate change,4=CRI format,5=driver callback,6=CRI thread)");}
             if(op==1) {
                 if(e.state!=1)throw std::runtime_error("Driver is not prepared");
                 e.startTick=ticks();e.lastAsio=e.startTick.load();e.accepting=true;check(e.driver->start(),"start");e.started=true;e.state=2;e.result=0;
@@ -342,7 +339,7 @@ SA_API int SaInitialize(const SaOptions* options) noexcept {
     return guarded([&]{
         if(!options||options->size!=sizeof(SaOptions)||options->abi!=ABI)throw std::runtime_error("ABI/options mismatch");
         if(e.state!=0)throw std::runtime_error("Already initialized; restart required");
-        if(options->frames!=32&&options->frames!=64&&options->frames!=128)throw std::runtime_error("Buffer must be 32, 64 or 128 samples");
+        if(options->frames!=32&&options->frames!=48&&options->frames!=64&&options->frames!=96&&options->frames!=128&&options->frames!=192&&options->frames!=256&&options->frames!=384&&options->frames!=512&&options->frames!=768&&options->frames!=1024&&options->frames!=1536&&options->frames!=2048)throw std::runtime_error("Buffer must be 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536 or 2048 samples");
         if(options->source>4||!options->driver[0]||options->driver[127])throw std::runtime_error("Invalid driver/source");
         e.options=*options;e.ownerThread=GetCurrentThreadId();e.ring.reset(options->frames);
         LARGE_INTEGER frequency;QueryPerformanceFrequency(&frequency);e.frequency=frequency.QuadPart;

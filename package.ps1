@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-param([string]$Version='0.1.2',[string]$TestedGameRoot)
+param([string]$Version='0.1.3',[string]$TestedGameRoot)
 $ErrorActionPreference='Stop'
 if($Version -notmatch '^[A-Za-z0-9._-]+$'){throw 'Invalid version label'}
 $root=$PSScriptRoot
