@@ -9,7 +9,7 @@ using System.Threading;
 using HarmonyLib;
 using MelonLoader;
 using UnityEngine;
-[assembly:MelonInfo(typeof(SinmaiAsio.Plugin),"Sinmai ASIO","0.2.0","Aira-Sakuranomiya")]
+[assembly:MelonInfo(typeof(SinmaiAsio.Plugin),"Sinmai ASIO","0.2.1","Aira-Sakuranomiya")]
 [assembly:MelonGame("sega-interactive","Sinmai")]
 namespace SinmaiAsio {
     public sealed class Plugin:MelonMod {
