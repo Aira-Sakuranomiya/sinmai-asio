@@ -4,7 +4,7 @@ $ErrorActionPreference='Stop'
 $root=$PSScriptRoot
 $release=Join-Path $root 'build'
 $out=Join-Path $root '.build'
-New-Item -ItemType Directory -Path $release -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $release 'Mods'),(Join-Path $release 'UserLibs\SinmaiAsio') -Force | Out-Null
 New-Item -ItemType Directory -Path $out -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $out 'fixtures') -Force | Out-Null
 $sdk=Join-Path $root 'third_party\asio-sdk\ASIOSDK'
@@ -66,7 +66,7 @@ $game=Join-Path $GameRoot 'Sinmai_Data\Managed'
 $csc=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $framework=Join-Path ${env:ProgramFiles(x86)} 'Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2'
 if(-not(Test-Path (Join-Path $framework 'mscorlib.dll'))){throw '.NET Framework 4.7.2 targeting pack is required'}
-$args=@('/nologo','/noconfig','/target:library','/platform:x64','/optimize+','/nostdlib+',('/out:'+(Join-Path $release 'SinmaiAsio.dll')))
+$args=@('/nologo','/noconfig','/target:library','/platform:x64','/optimize+','/nostdlib+',('/out:'+(Join-Path $out 'SinmaiAsio.dll')))
 foreach($dll in @('mscorlib.dll','System.dll','System.Core.dll')){$args+=('/reference:'+(Join-Path $framework $dll))}
 foreach($dll in @('MelonLoader.dll','0Harmony.dll','Tomlet.dll')){$args+=('/reference:'+(Join-Path $refs $dll))}
 foreach($dll in @('UnityEngine.dll','UnityEngine.CoreModule.dll','UnityEngine.IMGUIModule.dll')){$args+=('/reference:'+(Join-Path $game $dll))}
@@ -77,11 +77,18 @@ $configurationTests=Join-Path $out 'configuration-tests.exe'
 $testArgs=@('/nologo','/noconfig','/target:exe','/platform:x64','/optimize+','/nostdlib+',('/out:'+$configurationTests))
 foreach($dll in @('mscorlib.dll','System.dll','System.Core.dll')){$testArgs+=('/reference:'+(Join-Path $framework $dll))}
 $testArgs+=('/reference:'+(Join-Path $refs 'Tomlet.dll'))
-$testArgs+=@((Join-Path $root 'managed\Configuration.cs'),(Join-Path $root 'tests\configuration_tests.cs'))
+$testArgs+=@((Join-Path $root 'managed\Configuration.cs'),(Join-Path $root 'managed\Native.cs'),(Join-Path $root 'tests\configuration_tests.cs'))
 & $csc @testArgs
 if($LASTEXITCODE -ne 0){throw 'Configuration tests build failed'}
 Copy-Item -LiteralPath (Join-Path $refs 'Tomlet.dll') -Destination $out -Force
 & $configurationTests
 if($LASTEXITCODE -ne 0){throw 'Configuration tests failed'}
-if(-not $ManagedOnly){Copy-Item -LiteralPath (Join-Path $out 'SinmaiAsio.Native.dll') -Destination (Join-Path $release 'SinmaiAsio.Native.dll') -Force}
+Copy-Item -LiteralPath (Join-Path $out 'SinmaiAsio.dll') -Destination (Join-Path $release 'Mods\SinmaiAsio.dll') -Force
+if(-not $ManagedOnly){Copy-Item -LiteralPath (Join-Path $out 'SinmaiAsio.Native.dll') -Destination (Join-Path $release 'UserLibs\SinmaiAsio\SinmaiAsio.Native.dll') -Force}
+# Remove superseded generated flat outputs only when their new-layout replacements exist.
+foreach($file in @('SinmaiAsio.dll','SinmaiAsio.Native.dll')) {
+    $old=Join-Path $release $file
+    $relative=if($file -eq 'SinmaiAsio.dll'){'Mods\SinmaiAsio.dll'}else{'UserLibs\SinmaiAsio\SinmaiAsio.Native.dll'}
+    if((Test-Path -LiteralPath $old) -and (Test-Path -LiteralPath (Join-Path $release $relative))){Remove-Item -LiteralPath $old}
+}
 if($ManagedOnly){Write-Host "Managed build passed: $release"}else{Write-Host "Build and native tests passed: $release"}

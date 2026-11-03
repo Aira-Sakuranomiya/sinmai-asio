@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using SinmaiAsio;
 static class ConfigurationTests {
     static void Check(bool condition,string message){if(!condition)throw new Exception(message);}
     static int Main(){
+        Check(Native.Abi==6,"Unexpected native ABI");
+        Check(Marshal.SizeOf(typeof(Options))==280&&Marshal.SizeOf(typeof(Stats))==1392,"Native ABI struct size mismatch");
+        Check(Marshal.OffsetOf(typeof(Stats),"InputPeak").ToInt64()==1216&&Marshal.OffsetOf(typeof(Stats),"InvalidSamples").ToInt64()==1240,"Peak meter field offset mismatch");
+        Check(Marshal.OffsetOf(typeof(Stats),"CallbackMaxGapUs").ToInt64()==1248&&Marshal.OffsetOf(typeof(Stats),"LatencyChangeRequests").ToInt64()==1384,"Timing meter field offset mismatch");
         string root=Path.Combine(Path.GetTempPath(),"sinmai-asio-config-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try {
@@ -14,7 +19,7 @@ static class ConfigurationTests {
             var settings=Configuration.LoadOrCreate(path,()=>new[]{driver},out created);
             Check(created&&settings.Enabled&&settings.Driver==driver,"Single driver selection failed");
             var parsed=Configuration.Read(File.ReadAllText(path));
-            Check(parsed.Enabled&&parsed.Driver==driver&&parsed.BufferSamples==128&&!parsed.Diagnostics,"Generated TOML round trip failed");
+            Check(parsed.Enabled&&parsed.Driver==driver&&parsed.BufferSamples==0&&!parsed.Diagnostics&&!parsed.CaptureOutput,"Generated TOML round trip failed");
             byte[] original=File.ReadAllBytes(path);
             settings=Configuration.LoadOrCreate(path,()=>{throw new Exception("Existing config must not discover drivers");},out created);
             Check(!created&&Convert.ToBase64String(original)==Convert.ToBase64String(File.ReadAllBytes(path)),"Existing config changed");
@@ -31,6 +36,8 @@ static class ConfigurationTests {
             path=Path.Combine(root,"invalid.toml");File.WriteAllText(path,"Enabled = [");
             bool rejected=false;try{Configuration.LoadOrCreate(path,()=>new[]{"Other"},out created);}catch{rejected=true;}
             Check(rejected&&File.ReadAllText(path)=="Enabled = [","Invalid config must fail without overwrite");
+            Check(Configuration.Read("Enabled = true").BufferSamples==0,"Omitted buffer setting must default to automatic");
+            Check(Configuration.Read("CaptureOutput = true").CaptureOutput,"Capture opt-in was not parsed");
             Console.WriteLine("Configuration tests passed (selection, TOML escaping, preservation, invalid input).");
             return 0;
         } finally {

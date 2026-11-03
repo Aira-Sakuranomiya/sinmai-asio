@@ -19,14 +19,25 @@ namespace SinmaiAsio {
         public double MaximumRenderLockUs,MaximumRenderWorkUs;
         [MarshalAs(UnmanagedType.ByValArray,SizeConst=64)] public ulong[] WaitHistogram;
         [MarshalAs(UnmanagedType.ByValArray,SizeConst=64)] public ulong[] GapHistogram;
+        public double InputPeak;
+        public ulong OverRangeFrames,LimitedFrames,InvalidSamples;
+        public double CallbackMaxGapUs,CallbackMaxGapExcessUs;
+        public ulong CallbackGapCount,CallbackGapsOver150Percent,CallbackGapsOver200Percent;
+        public ulong TimeInfoCallbacks,LegacyCallbacks,ValidPositionCallbacks,UnavailablePositionCallbacks;
+        public ulong PositionDiscontinuities,PositionForwardGapSamples,PositionBackwardSteps,PositionRepeatedSteps,PositionShortSteps;
+        public ulong ResyncRequests,ResetRequests,BufferChangeRequests,LatencyChangeRequests;
         public static Stats Create() {return new Stats {Size=(uint)Marshal.SizeOf(typeof(Stats)),Abi=Native.Abi,WaitHistogram=new ulong[64],GapHistogram=new ulong[64]};}
     }
     internal static class Native {
-        internal const uint Abi=2;
+        internal const uint Abi=6;
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate int Simple();
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate int Initialize(ref Options options);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate int GetStats(ref Stats stats);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl,CharSet=CharSet.Ansi)] internal delegate int Text(StringBuilder text,uint size);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate int ConfigureCapture(uint seconds);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl,CharSet=CharSet.Unicode)] internal delegate int SaveCapture([MarshalAs(UnmanagedType.LPWStr)] string path);
+        internal static ConfigureCapture SaConfigureCapture;
+        internal static SaveCapture SaSaveCapture;
         internal static Simple SaGetAbiVersion,SaInstallCri,SaAfterCriInitialize,SaStart,SaStop,SaRestoreCri;
         internal static Initialize SaInitialize;
         internal static GetStats SaGetStats;
@@ -45,6 +56,7 @@ namespace SinmaiAsio {
             SaGetAbiVersion=Export<Simple>(module,"SaGetAbiVersion");SaInitialize=Export<Initialize>(module,"SaInitialize");
             SaInstallCri=Export<Simple>(module,"SaInstallCri");SaAfterCriInitialize=Export<Simple>(module,"SaAfterCriInitialize");
             SaStart=Export<Simple>(module,"SaStart");SaStop=Export<Simple>(module,"SaStop");SaRestoreCri=Export<Simple>(module,"SaRestoreCri");
+            SaConfigureCapture=Export<ConfigureCapture>(module,"SaConfigureCapture");SaSaveCapture=Export<SaveCapture>(module,"SaSaveCapture");
             SaGetStats=Export<GetStats>(module,"SaGetStats");SaGetError=Export<Text>(module,"SaGetError");SaGetDriverInfo=Export<Text>(module,"SaGetDriverInfo");
         }
         internal static void Check(int result) {if(result==0)return;var text=new StringBuilder(2048);SaGetError(text,2048);throw new InvalidOperationException(text.ToString());}

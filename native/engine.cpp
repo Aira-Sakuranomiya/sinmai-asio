@@ -15,6 +15,8 @@
 #include "iasiodrv.h"
 #include "api.h"
 #include "audio.h"
+#include "timing.h"
+#include "capture.h"
 #include "MinHook.h"
 #pragma comment(lib,"ole32.lib")
 #pragma comment(lib,"advapi32.lib")
@@ -28,6 +30,8 @@ constexpr char CriHash[]="1F6555296765D4B7D8AB1BCD5C8D44F515764933B6149D42330A44
 struct Engine {
     SaOptions options{};
     sa::Ring ring;
+    sa::OutputCapture capture;
+    std::mutex captureMutex;
     std::array<sa::Frame,sa::MaxBufferSamples> callbackBlock{};
     std::mutex messageMutex;
     std::string error,driverInfo;
@@ -36,6 +40,15 @@ struct Engine {
     std::atomic<uint64_t> callbacks{0},frames{0},missing{0},criCalls{0},criFrames{0},nonzero{0},threadChanges{0};
     std::atomic<uint64_t> renderCalls{0},renderFrames{0};
     std::atomic<uint64_t> missingAfterWarmup{0},outputNonzero{0};
+    std::atomic<double> inputPeak{0};
+    std::atomic<uint64_t> overRangeFrames{0},limitedFrames{0},invalidSamples{0};
+    std::atomic<double> callbackMaxGapUs{0},callbackMaxGapExcessUs{0};
+    std::atomic<uint64_t> callbackGapCount{0},callbackGapsOver150Percent{0},callbackGapsOver200Percent{0};
+    std::atomic<uint64_t> timeInfoCallbacks{0},legacyCallbacks{0},validPositionCallbacks{0},unavailablePositionCallbacks{0};
+    std::atomic<uint64_t> positionDiscontinuities{0},positionForwardGapSamples{0},positionBackwardSteps{0},positionRepeatedSteps{0},positionShortSteps{0};
+    std::atomic<uint64_t> resyncRequests{0},resetRequests{0},bufferChangeRequests{0},latencyChangeRequests{0};
+    int64_t diagnosticLastCallback=0;
+    sa::PositionTracker positionTracker;
     std::atomic<unsigned> peakQueue{0},criThread{0},asioThread{0},channels{0},minBlock{UINT_MAX},maxBlock{0};
     std::atomic<int64_t> maxCallback{0},lastCri{0},lastRender{0},lastAsio{0},startTick{0};
     std::atomic<int64_t> maximumRenderLock{0},maximumRenderWork{0};
@@ -57,7 +70,7 @@ struct Engine {
     unsigned char* cri=nullptr;
     void* originalBackend=nullptr;
     void* customBackend[38]{};
-    bool installed=false;
+    bool installed=false,quantumPatched=false;
     void (*setBackend)(void*)=nullptr;
     bool hookInitialized=false,hookCreated=false;
     bool renderHookCreated=false;
@@ -67,6 +80,7 @@ struct Engine {
     std::atomic<bool> renderStop{false};
     HANDLE renderThread=nullptr,renderEvent=nullptr,renderReady=nullptr;
 } e;
+static_assert(std::atomic<double>::is_always_lock_free,"Peak meter must remain lock-free on x64");
 static_assert(sizeof(e.customBackend)==0x130,"The complete CRI backend interface must be retained");
 int64_t ticks() noexcept {LARGE_INTEGER x;QueryPerformanceCounter(&x);return x.QuadPart;}
 template<class T> void maximum(std::atomic<T>& a,T x) noexcept {auto v=a.load();while(v<x&&!a.compare_exchange_weak(v,x)) {}}
@@ -77,12 +91,39 @@ void check(ASIOError r,const char* what) {if(r!=ASE_OK && r!=ASE_SUCCESS)throw s
 void set_error(const std::string& s) {std::lock_guard<std::mutex> guard(e.messageMutex);e.error=s;}
 int error(const char* s) noexcept {try{set_error(s);}catch(...){}return -1;}
 
-void process(long index,ASIOBool) noexcept {
+uint64_t sample_position(const ASIOSamples& position) noexcept {
+#if NATIVE_INT64
+    return uint64_t(position);
+#else
+    return (uint64_t(position.hi)<<32)|uint64_t(position.lo);
+#endif
+}
+void record_callback(int64_t now,const ASIOTime* time) noexcept {
+    if(e.diagnosticLastCallback) {
+        const auto gap=sa::observe_gap(now-e.diagnosticLastCallback,e.frequency,e.options.frames);
+        ++e.callbackGapCount;maximum(e.callbackMaxGapUs,gap.microseconds);maximum(e.callbackMaxGapExcessUs,gap.excessMicroseconds);
+        if(gap.over150Percent)++e.callbackGapsOver150Percent;
+        if(gap.over200Percent)++e.callbackGapsOver200Percent;
+    }
+    e.diagnosticLastCallback=now;
+    if(time)++e.timeInfoCallbacks;else ++e.legacyCallbacks;
+    const bool valid=time&&(time->timeInfo.flags&kSamplePositionValid);
+    if(valid)++e.validPositionCallbacks;else ++e.unavailablePositionCallbacks;
+    const auto step=e.positionTracker.observe(valid,valid?sample_position(time->timeInfo.samplePosition):0,e.options.frames);
+    if(step.discontinuity)++e.positionDiscontinuities;
+    e.positionForwardGapSamples+=step.forwardGapSamples;
+    if(step.backward)++e.positionBackwardSteps;
+    if(step.repeated)++e.positionRepeatedSteps;
+    if(step.shortStep)++e.positionShortSteps;
+}
+void process(long index,ASIOBool,const ASIOTime* time) noexcept {
     e.inflight.fetch_add(1,std::memory_order_acq_rel);
     if(index<0||index>1) {fail(5);e.inflight.fetch_sub(1);return;}
     const auto begin=ticks();e.lastAsio=begin;e.asioThread=GetCurrentThreadId();
     const bool active=e.accepting.load(std::memory_order_acquire);
-    unsigned missing=0,audibleOutput=0;
+    if(active)record_callback(begin,time);
+    unsigned missing=0,audibleOutput=0,overRange=0,limited=0,invalid=0;
+    double inputPeak=0;
     auto* block=e.callbackBlock.data();unsigned available=0;
     if(active&&(e.options.source==0||e.options.source==4)) {
         available=e.ring.take(block,e.options.frames);missing=e.options.frames-available;
@@ -99,6 +140,8 @@ void process(long index,ASIOBool) noexcept {
                 frame.l=frame.r=e.tone[e.tonePhase];e.tonePhase=(e.tonePhase+440)%48000;
             }
         }
+        const auto peak=sa::soft_limit(frame.l,frame.r);
+        inputPeak=std::max(inputPeak,peak.peak);overRange+=peak.overRange;limited+=peak.limited;invalid+=peak.invalidSamples;
         if(e.options.source==4)frame.l=frame.r=0;
         if(std::fabs(frame.l)>1e-7f||std::fabs(frame.r)>1e-7f)++audibleOutput;
         for(unsigned ch=0;ch<2;++ch) {
@@ -108,6 +151,7 @@ void process(long index,ASIOBool) noexcept {
     }
     if(active) {
         ++e.callbacks;e.frames+=e.options.frames;e.outputNonzero+=audibleOutput;
+        maximum(e.inputPeak,inputPeak);e.overRangeFrames+=overRange;e.limitedFrames+=limited;e.invalidSamples+=invalid;
         // Missing frames are silence for this callback only. Keep the driver and render worker
         // running so PCM resumes on the next callback with available data; never latch a fault.
         // Preserve the one-second warmup distinction for diagnostics without per-underrun logs.
@@ -116,16 +160,22 @@ void process(long index,ASIOBool) noexcept {
             if(begin-e.startTick>e.frequency)e.missingAfterWarmup+=missing;
         }
     }
+    if(active)e.capture.append(e.buffers[0].buffers[index],e.buffers[1].buffers[index],e.options.frames);
     if(e.outputReady)e.driver->outputReady();
     maximum(e.maxCallback,ticks()-begin);
     e.inflight.fetch_sub(1,std::memory_order_release);
 }
-ASIOTime* process_time(ASIOTime* time,long index,ASIOBool direct) noexcept {process(index,direct);return time;}
+void process_legacy(long index,ASIOBool direct) noexcept {process(index,direct,nullptr);}
+ASIOTime* process_time(ASIOTime* time,long index,ASIOBool direct) noexcept {process(index,direct,time);return time;}
 void rate_changed(ASIOSampleRate rate) noexcept {if(rate!=48000.0)fail(3);}
 long asio_message(long selector,long value,void*,double*) noexcept {
     if(selector==kAsioSelectorSupported) return value==kAsioEngineVersion||value==kAsioResetRequest||value==kAsioBufferSizeChange||value==kAsioResyncRequest||value==kAsioLatenciesChanged||value==kAsioSupportsTimeInfo;
     if(selector==kAsioEngineVersion)return 2;
     if(selector==kAsioSupportsTimeInfo)return 1;
+    if(selector==kAsioResyncRequest)++e.resyncRequests;
+    if(selector==kAsioResetRequest)++e.resetRequests;
+    if(selector==kAsioBufferSizeChange)++e.bufferChangeRequests;
+    if(selector==kAsioLatenciesChanged)++e.latencyChangeRequests;
     if(selector==kAsioResetRequest||selector==kAsioBufferSizeChange||selector==kAsioResyncRequest||selector==kAsioLatenciesChanged){fail(2);return 1;}
     return 0;
 }
@@ -147,23 +197,27 @@ void initialize_driver() {
     if(!e.driver->init(GetDesktopWindow())) {char text[124]{};e.driver->getErrorMessage(text);throw std::runtime_error(std::string("ASIO init: ")+text);}
     long inputs=0,outputs=0,low=0,high=0,preferred=0,granularity=0;
     check(e.driver->getChannels(&inputs,&outputs),"getChannels");
+    check(e.driver->canSampleRate(48000),"canSampleRate");
+    check(e.driver->getSampleRate(&e.sampleRate),"getSampleRate");
+    if(e.sampleRate!=48000) {check(e.driver->setSampleRate(48000),"setSampleRate");check(e.driver->getSampleRate(&e.sampleRate),"getSampleRate");}
+    if(e.sampleRate!=48000)throw std::runtime_error("Driver did not accept 48000 Hz");
     check(e.driver->getBufferSize(&low,&high,&preferred,&granularity),"getBufferSize");
     std::ostringstream report;
     report<<"driver outputs="<<outputs<<" inputs="<<inputs<<" buffer min="<<low<<" max="<<high<<" preferred="<<preferred<<" granularity="<<granularity;
     {std::lock_guard<std::mutex> guard(e.messageMutex);e.driverInfo=report.str();}
     if(e.options.left>=unsigned(outputs)||e.options.right>=unsigned(outputs)||e.options.left==e.options.right)throw std::runtime_error("Output channels are unavailable or identical");
-    if(!buffer_allowed(e.options.frames,low,high,granularity))throw std::runtime_error("Requested buffer is not supported: "+report.str());
-    check(e.driver->canSampleRate(48000),"canSampleRate");
-    check(e.driver->getSampleRate(&e.sampleRate),"getSampleRate");
-    if(e.sampleRate!=48000) {check(e.driver->setSampleRate(48000),"setSampleRate");check(e.driver->getSampleRate(&e.sampleRate),"getSampleRate");}
-    if(e.sampleRate!=48000)throw std::runtime_error("Driver did not accept 48000 Hz");
+    const unsigned selected=sa::resolve_buffer(e.options.frames,preferred);
+    if(!selected)throw std::runtime_error("Driver preferred buffer is unsupported; set BufferSamples manually to a supported size: "+report.str());
+    if(!buffer_allowed(selected,low,high,granularity))throw std::runtime_error("Requested buffer is not supported: "+report.str());
+    e.options.frames=selected;e.ring.reset(selected);
+
     for(unsigned ch=0;ch<2;++ch) {
         e.info[ch].channel=long(ch?e.options.right:e.options.left);e.info[ch].isInput=ASIOFalse;
         check(e.driver->getChannelInfo(&e.info[ch]),"getChannelInfo");
         if(!sa::sample_bytes(e.info[ch].type))throw std::runtime_error("Unsupported ASIO sample type: "+std::to_string(e.info[ch].type));
         e.buffers[ch].channelNum=e.info[ch].channel;e.buffers[ch].isInput=ASIOFalse;
     }
-    e.handlers={process,rate_changed,asio_message,process_time};
+    e.handlers={process_legacy,rate_changed,asio_message,process_time};
     check(e.driver->createBuffers(e.buffers,2,long(e.options.frames),&e.handlers),"createBuffers");e.buffersCreated=true;
     for(unsigned ch=0;ch<2;++ch)for(unsigned half=0;half<2;++half) {
         if(!e.buffers[ch].buffers[half])throw std::runtime_error("Driver returned a null buffer");
@@ -171,7 +225,7 @@ void initialize_driver() {
     }
     check(e.driver->getLatencies(&e.latencyIn,&e.latencyOut),"getLatencies");
     e.outputReady=e.driver->outputReady()==ASE_OK;
-    report<<" sampleRate="<<e.sampleRate<<" types="<<e.info[0].type<<","<<e.info[1].type<<" outputLatencySamples="<<e.latencyOut;
+    report<<" bufferSamples="<<e.options.frames<<" sampleRate="<<e.sampleRate<<" types="<<e.info[0].type<<","<<e.info[1].type<<" outputLatencySamples="<<e.latencyOut;
     {std::lock_guard<std::mutex> guard(e.messageMutex);e.driverInfo=report.str();}
 }
 void stop_driver() {
@@ -226,6 +280,23 @@ std::string file_hash(const wchar_t* path) {
     if(!success)throw std::runtime_error("CRI SHA256 failed");
     char text[65]{};for(unsigned i=0;i<32;++i)sprintf_s(text+2*i,3,"%02X",digest[i]);return text;
 }
+// Keep the stock 32-sample alignment and partial/silent-output behavior, but
+// bound each internal mixer call to its existing minimum quantum. The outer
+// render loop still fills exactly the selected ASIO budget on the same clock.
+void set_render_quantum(bool enable) {
+    static const unsigned char original[]={0x41,0xbf,0x00,0x01,0x00,0x00};
+    static const unsigned char patched[]={0x41,0xbf,0x20,0x00,0x00,0x00};
+    auto* address=e.cri+0x7cce5;
+    const auto* expected=enable?original:patched;
+    const auto* replacement=enable?patched:original;
+    if(std::memcmp(address,expected,sizeof(original)))throw std::runtime_error("CRI render quantum was modified by another module");
+    DWORD protection=0;
+    if(!VirtualProtect(address,sizeof(original),PAGE_EXECUTE_READWRITE,&protection))throw std::runtime_error("Cannot protect CRI render quantum");
+    std::memcpy(address,replacement,sizeof(original));e.quantumPatched=enable;
+    const bool flushed=FlushInstructionCache(GetCurrentProcess(),address,sizeof(original))!=FALSE;
+    DWORD unused=0;const bool restored=VirtualProtect(address,sizeof(original),protection,&unused)!=FALSE;
+    if(!flushed||!restored)throw std::runtime_error("Cannot finalize CRI render quantum protection");
+}
 void profile() {
     HMODULE module=GetModuleHandleW(L"cri_ware_unity.dll");if(!module)throw std::runtime_error("CRI library is not loaded");
     wchar_t path[32768];if(!GetModuleFileNameW(module,path,32768)||file_hash(path)!=CriHash)throw std::runtime_error("Unsupported CRI DLL SHA256; no internal pointers changed");
@@ -237,6 +308,8 @@ void profile() {
     if(pseudo[8]!=e.cri+0x745e4||pseudo[14]!=e.cri+0x74734)throw std::runtime_error("CRI pseudo backend signature mismatch");
     const unsigned char renderSignature[]={0x48,0x8b,0xc4,0x48,0x89,0x58,0x10,0x48,0x89,0x68,0x18,0x48,0x89,0x70,0x20};
     if(std::memcmp(e.cri+0x7cca0,renderSignature,sizeof(renderSignature)))throw std::runtime_error("CRI render entry signature mismatch");
+    const unsigned char quantumSignature[]={0x41,0xbf,0x00,0x01,0x00,0x00,0x48,0x8b,0x0b};
+    if(std::memcmp(e.cri+0x7cce5,quantumSignature,sizeof(quantumSignature)))throw std::runtime_error("CRI render quantum signature mismatch");
 }
 void scheduled_render(void* rack) noexcept {
     // The normal server still handles commands/decoding, but only the ASIO-demand worker may
@@ -335,22 +408,23 @@ int copy_string(const std::string& text,char* buffer,unsigned size) {if(!buffer|
 }
 
 SA_API int SaGetAbiVersion() noexcept {return ABI;}
-SA_API int SaInitialize(const SaOptions* options) noexcept {
+SA_API int SaInitialize(SaOptions* options) noexcept {
     return guarded([&]{
         if(!options||options->size!=sizeof(SaOptions)||options->abi!=ABI)throw std::runtime_error("ABI/options mismatch");
         if(e.state!=0)throw std::runtime_error("Already initialized; restart required");
-        if(options->frames!=32&&options->frames!=48&&options->frames!=64&&options->frames!=96&&options->frames!=128&&options->frames!=192&&options->frames!=256&&options->frames!=384&&options->frames!=512&&options->frames!=768&&options->frames!=1024&&options->frames!=1536&&options->frames!=2048)throw std::runtime_error("Buffer must be 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536 or 2048 samples");
+        if(options->frames&&!sa::supported_buffer(options->frames))throw std::runtime_error("Unsupported buffer size; use 0 for driver preferred size or a documented sample count");
         if(options->source>4||!options->driver[0]||options->driver[127])throw std::runtime_error("Invalid driver/source");
-        e.options=*options;e.ownerThread=GetCurrentThreadId();e.ring.reset(options->frames);
+        e.options=*options;e.ownerThread=GetCurrentThreadId();
         LARGE_INTEGER frequency;QueryPerformanceFrequency(&frequency);e.frequency=frequency.QuadPart;
         for(unsigned i=0;i<48000;++i)e.tone[i]=float(0.01*std::sin(6.283185307179586*i/48000));
-        if(options->source==3){e.state=1;return;}
+        if(options->source==3){e.options.frames=options->frames?options->frames:128;e.ring.reset(e.options.frames);options->frames=e.options.frames;e.state=1;return;}
         e.command=CreateEventW(nullptr,FALSE,FALSE,nullptr);e.done=CreateEventW(nullptr,TRUE,FALSE,nullptr);
         if(!e.command||!e.done)throw std::runtime_error("Cannot create control events");
         e.worker=CreateThread(nullptr,0,worker,nullptr,0,nullptr);
         if(!e.worker)throw std::runtime_error("Cannot create ASIO control thread");
         if(WaitForSingleObject(e.done,15000)!=WAIT_OBJECT_0)throw std::runtime_error("ASIO driver initialization timed out");
         if(e.result)throw std::runtime_error(e.error);
+        options->frames=e.options.frames;
     });
 }
 SA_API int SaStart() noexcept {
@@ -361,9 +435,36 @@ SA_API int SaStart() noexcept {
 }
 SA_API int SaStop() noexcept {
     return guarded([&]{
+        std::lock_guard<std::mutex> captureLock(e.captureMutex);
         if(e.options.source==3){e.state=3;return;}
         if(e.worker){if(command(3))throw std::runtime_error(e.error);if(WaitForSingleObject(e.worker,5000)!=WAIT_OBJECT_0)throw std::runtime_error("ASIO worker did not exit");CloseHandle(e.worker);e.worker=nullptr;CloseHandle(e.command);CloseHandle(e.done);e.command=e.done=nullptr;e.state=e.fault?4:3;}
         stop_render_worker();
+    });
+}
+SA_API int SaConfigureCapture(uint32_t seconds) noexcept {
+    return guarded([&]{
+        std::lock_guard<std::mutex> lock(e.captureMutex);
+        if(e.state!=1||e.started||e.options.source==3||seconds!=30)throw std::runtime_error("Capture must be configured for 30 seconds before playback starts");
+        e.capture.configure(48000*seconds,e.info[0].type,e.info[1].type);
+    });
+}
+SA_API int SaSaveCapture(const wchar_t* path) noexcept {
+    return guarded([&]{
+        std::lock_guard<std::mutex> lock(e.captureMutex);
+        if(!path||!path[0]||e.state!=2)throw std::runtime_error("Capture save requires a running ASIO stream and a path");
+        e.capture.request_snapshot();
+        const auto deadline=ticks()+e.frequency;
+        const sa::CaptureBank* bank=nullptr;
+        while(!(bank=e.capture.snapshot())&&ticks()<deadline)Sleep(1);
+        if(!bank)throw std::runtime_error("No ASIO callback acknowledged the capture request");
+        struct Finish {~Finish(){e.capture.finish_snapshot();}} finish;
+        FILE* file=nullptr;
+        if(_wfopen_s(&file,path,L"wbx")||!file)throw std::runtime_error("Cannot create capture WAV (path must not already exist)");
+        try {
+            sa::write_capture_wave(file,*bank);
+            if(std::fclose(file)){file=nullptr;throw std::runtime_error("Capture WAV close failed");}
+            file=nullptr;
+        } catch(...) {if(file)std::fclose(file);throw;}
     });
 }
 SA_API int SaGetError(char* buffer,uint32_t size) noexcept {return guarded([&]{std::lock_guard<std::mutex> lock(e.messageMutex);if(copy_string(e.error,buffer,size)<0)throw std::runtime_error("Invalid error buffer");});}
@@ -376,6 +477,12 @@ SA_API int SaGetStats(SaStats* s) noexcept {
     s->queued=e.ring.size();s->peakQueue=e.peakQueue;s->criThread=e.criThread;s->asioThread=e.asioThread;s->channels=e.channels;s->minimumBlock=e.minBlock==UINT_MAX?0:e.minBlock.load();s->maximumBlock=e.maxBlock;
     s->sampleRate=e.sampleRate;s->reportedInputMs=e.latencyIn/48.0;s->reportedOutputMs=e.latencyOut/48.0;s->maxCallbackUs=e.frequency?e.maxCallback.load()*1000000.0/e.frequency:0;const auto start=e.startTick.load();s->elapsedSeconds=start?(ticks()-start)/double(e.frequency):0;
     s->maximumRenderLockUs=e.frequency?e.maximumRenderLock.load()*1000000.0/e.frequency:0;s->maximumRenderWorkUs=e.frequency?e.maximumRenderWork.load()*1000000.0/e.frequency:0;
+    s->inputPeak=e.inputPeak.load();s->overRangeFrames=e.overRangeFrames.load();s->limitedFrames=e.limitedFrames.load();s->invalidSamples=e.invalidSamples.load();
+    s->callbackMaxGapUs=e.callbackMaxGapUs.load();s->callbackMaxGapExcessUs=e.callbackMaxGapExcessUs.load();
+    s->callbackGapCount=e.callbackGapCount.load();s->callbackGapsOver150Percent=e.callbackGapsOver150Percent.load();s->callbackGapsOver200Percent=e.callbackGapsOver200Percent.load();
+    s->timeInfoCallbacks=e.timeInfoCallbacks.load();s->legacyCallbacks=e.legacyCallbacks.load();s->validPositionCallbacks=e.validPositionCallbacks.load();s->unavailablePositionCallbacks=e.unavailablePositionCallbacks.load();
+    s->positionDiscontinuities=e.positionDiscontinuities.load();s->positionForwardGapSamples=e.positionForwardGapSamples.load();s->positionBackwardSteps=e.positionBackwardSteps.load();s->positionRepeatedSteps=e.positionRepeatedSteps.load();s->positionShortSteps=e.positionShortSteps.load();
+    s->resyncRequests=e.resyncRequests.load();s->resetRequests=e.resetRequests.load();s->bufferChangeRequests=e.bufferChangeRequests.load();s->latencyChangeRequests=e.latencyChangeRequests.load();
     for(unsigned i=0;i<64;++i){s->waitHistogram[i]=e.wait[i];s->gapHistogram[i]=e.gap[i];}return 0;
 }
 SA_API int SaInstallCri() noexcept {
@@ -402,6 +509,13 @@ SA_API int SaInstallCri() noexcept {
         }
         status=MH_EnableHook(MH_ALL_HOOKS);
         if(status!=MH_OK){MH_Uninitialize();e.hookCreated=e.hookInitialized=e.renderHookCreated=false;throw std::runtime_error("Cannot activate CRI hooks");}
+        try {set_render_quantum(true);}
+        catch(...) {
+            if(e.quantumPatched)set_render_quantum(false);
+            MH_DisableHook(MH_ALL_HOOKS);MH_Uninitialize();
+            e.hookCreated=e.hookInitialized=e.renderHookCreated=false;
+            throw;
+        }
         e.installed=true;
     });
 }
@@ -432,6 +546,7 @@ SA_API int SaRestoreCri() noexcept {
         void* current=*global;
         if(current==e.customBackend)InterlockedCompareExchangePointer(global,e.originalBackend,e.customBackend);
         else if(current && current!=e.originalBackend)throw std::runtime_error("CRI backend was replaced by another module");
+        if(e.quantumPatched)set_render_quantum(false);
         if(e.hookCreated){if(MH_DisableHook(e.cri+0x73e50)!=MH_OK||MH_RemoveHook(e.cri+0x73e50)!=MH_OK)throw std::runtime_error("Cannot remove CRI registration hook");e.hookCreated=false;}
         if(e.renderHookCreated){if(MH_DisableHook(e.cri+0x7cca0)!=MH_OK||MH_RemoveHook(e.cri+0x7cca0)!=MH_OK)throw std::runtime_error("Cannot remove CRI rendering hook");e.renderHookCreated=false;}
         if(e.hookInitialized){MH_Uninitialize();e.hookInitialized=false;}

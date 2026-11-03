@@ -10,10 +10,11 @@ namespace SinmaiAsio {
     public sealed class Settings {
         public bool Enabled=false;
         public string Driver="Yamaha Steinberg USB ASIO";
-        public int BufferSamples=128;
+        public int BufferSamples=0;
         public int LeftChannel=0;
         public int RightChannel=1;
         public bool Diagnostics=false;
+        public bool CaptureOutput=false;
     }
     internal static class Configuration {
         internal static string[] InstalledDrivers() {
@@ -30,10 +31,10 @@ namespace SinmaiAsio {
             string selected=drivers.FirstOrDefault(name=>string.Equals(name,"Yamaha Steinberg USB ASIO",StringComparison.OrdinalIgnoreCase));
             if(selected==null&&drivers.Length==1)selected=drivers[0];
             var settings=new Settings {Enabled=selected!=null,Driver=selected??""};
-            string text="# 驱动面板须设置 48000 Hz，并与 BufferSamples 一致。\r\n"+
-                "# Set the driver panel to 48000 Hz and match BufferSamples.\r\n";
+            string text="# BufferSamples = 0：启动时自动读取 ASIO 驱动的首选缓冲大小。\r\n"+
+                "# BufferSamples = 0: use the ASIO driver preferred buffer size at startup.\r\n";
             if(selected==null)text+="# 未找到唯一驱动：请填写 Driver 并设置 Enabled = true。\r\n# No unambiguous driver: set Driver and Enabled = true manually.\r\n";
-            text+="Enabled = "+(settings.Enabled?"true":"false")+"\r\nDriver = \""+Escape(settings.Driver)+"\"\r\nBufferSamples = 128\r\nLeftChannel = 0\r\nRightChannel = 1\r\nDiagnostics = false\r\n";
+            text+="Enabled = "+(settings.Enabled?"true":"false")+"\r\nDriver = \""+Escape(settings.Driver)+"\"\r\nBufferSamples = 0\r\nLeftChannel = 0\r\nRightChannel = 1\r\nDiagnostics = false\r\nCaptureOutput = false\r\n";
             // CreateNew prevents overwriting a configuration created concurrently.
             using(var stream=new FileStream(path,FileMode.CreateNew,FileAccess.Write,FileShare.None))
             using(var writer=new StreamWriter(stream,new UTF8Encoding(false)))writer.Write(text);
