@@ -9,6 +9,7 @@ function Percentile($histogram,[double]$fraction) {
     for($i=0;$i -lt $histogram.Count;$i++){$sum+=$histogram[$i];if($sum -ge $threshold){if($i -eq 63){return '>=15.75 (saturated)'};return (($i+1)*0.25)}}
 }
 [pscustomobject]@{
+    BufferSamples=$s.bufferSamples;ConfiguredServerFrequency=$s.configuredServerFrequency;DiagnosticFrequencyOverride=$s.serverFrequencyOverride
     Mode=$s.source;State=$s.state;Fault=$s.fault;ElapsedSeconds=$s.elapsedSeconds
     AcceptedCriFrames=$s.criFrames;RenderedFrames=$s.renderFrames;AudibleFrames=$s.nonzeroFrames
     AsioFrames=$s.frames;MissingFramesIncludingWarmup=$s.missingSamplesIncludingWarmup

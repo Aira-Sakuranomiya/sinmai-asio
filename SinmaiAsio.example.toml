@@ -17,3 +17,7 @@ Diagnostics = false
 # 诊断录音：保留最近 30 秒输出 PCM；收到保存请求才写入 WAV。
 # Diagnostic capture: keep 30 seconds of output PCM; write WAV only on request.
 CaptureOutput = false
+
+# 可选软限幅（压缩峰值），默认关闭；修改后重启游戏。
+# Optional peak soft limiter, off by default; restart after changing.
+SoftLimiter = false

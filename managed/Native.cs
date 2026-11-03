@@ -7,6 +7,7 @@ namespace SinmaiAsio {
     internal struct Options {
         public uint Size,Abi,Frames,Left,Right,Source;
         [MarshalAs(UnmanagedType.ByValTStr,SizeConst=128)] public string Driver;
+        public uint SoftLimiter;
     }
     [StructLayout(LayoutKind.Sequential,Pack=8)]
     internal struct Stats {
@@ -29,7 +30,7 @@ namespace SinmaiAsio {
         public static Stats Create() {return new Stats {Size=(uint)Marshal.SizeOf(typeof(Stats)),Abi=Native.Abi,WaitHistogram=new ulong[64],GapHistogram=new ulong[64]};}
     }
     internal static class Native {
-        internal const uint Abi=6;
+        internal const uint Abi=7;
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate int Simple();
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate int Initialize(ref Options options);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate int GetStats(ref Stats stats);

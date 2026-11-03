@@ -112,3 +112,31 @@ waiting and driver latency must stay labeled separately from physical/acoustic l
 
 - Version 0.2.0 retains the 0.1.9 implementation and ABI 6; the version change does not alter audio processing. Live 0.1.9 startup logs confirmed a 256-frame ASIO buffer and 32-frame CRI submissions. The available snapshot covered about 50 seconds with zero source underruns, zero position discontinuities and no fault; the user subsequently reported no further crackle reproduction so far.
 - Diagnostics and capture were then disabled in the user's runtime config. A fixed-version 30-minute soak, post-change PCM comparison and additional sound-card verification are still incomplete. Absence of a reported recurrence is not a measured guarantee that the defect is eliminated.
+
+## 0.2.0 optional limiter follow-up
+
+- Full build and existing offline tests passed with ABI 7 (Options 284, Stats 1392). New checks cover disabled processing preserving over-range finite samples, retained metering/sanitation, default-off generated/omitted configuration, explicit enable parsing, native invalid-flag rejection and managed field offset 280. Enabled limiter behavior remains covered by the existing tests.
+- Runtime game files/config were not replaced and no playback test was run for this follow-up. Version remains 0.2.0; its release package is regenerated with the matched ABI 7 DLL pair.
+
+## 0.2.0 configuration completion follow-up
+
+- Managed rebuild and configuration/ABI tests passed. Coverage includes persisting missing defaults, idempotent repeat loads, retaining disabled/enabled states and driver/buffer choices, quoted existing limiter keys, comments and unknown multiline values, top-level insertion ahead of nested tables, LF preservation, empty existing configs, and malformed input without overwrite.
+- No game config was edited during these tests. Existing installations gain missing options on their next load with the rebuilt managed DLL. Defaults for SoftLimiter and CaptureOutput remain false.
+
+## 0.2.0 malformed-configuration warnings
+
+- Managed rebuild and config tests passed. TOML syntax/type failures are classified through their exception chain and reported once through MelonLogger.Warning with bilingual instructions, config path and parser reason. This does not depend on Diagnostics. Other I/O/runtime failures retain the existing error handling. Malformed syntax and wrong option-type tests confirm the typed warning payload and unchanged original file.
+
+## 0.2.0 recurrence and server-frequency diagnostic
+
+- Another reproduction with the 32-frame quantum and SoftLimiter disabled still yielded 760 exact stereo-zero runs >=3 frames, all ending on 256-frame output boundaries. The 32-frame quantum is therefore not a confirmed fix. Source underrun, position-discontinuity and driver-resync counters remained zero. The user reports that the same issue was not heard with original shared WASAPI output.
+- Read-only inspection of the live CRI server-frequency field at RVA 0x160310 confirmed 187.5 Hz; the managed replay was not merely logging a value that failed to apply.
+- An opt-in, child-process-only SINMAI_ASIO_SERVER_FREQUENCY override and playback probe launcher were added to isolate background processing cadence while keeping the same ASIO buffer, mixer quantum and output queue. Default launches are unchanged. Tests cover normal/default frequency, invariant parsing, explicit override and invalid finite/range input rejection. No 750-Hz gameplay comparison has yet been performed; this is an experiment, not a fix claim.
+
+
+## 0.2.0 CRI background-processing cadence fix
+
+- Startup log and stats confirmed the comparison used 750 Hz with the same 48-kHz, 256-frame UR22C ASIO output, 32-frame mixer quantum and one-block queue. The user reports six consecutive tests without recurrence; the previous cadence typically reproduced within three to four tests. This is user-observed improvement, not proof of universal stability or of the exact internal cause.
+- Normal launches now use max(750, 48000 / effectiveFrames) Hz, so the tested setting no longer requires a diagnostic launcher. Smaller buffers retain their existing higher cadence. Diagnostic overrides remain available for controlled comparisons. No ASIO buffer, queue capacity, render-clock ownership or limiter default changes.
+- Regression coverage includes the 750-Hz floor across automatic/larger buffers, unchanged 48/32-frame cadence, and explicit diagnostic overrides including the previous 187.5-Hz setting. Other devices/buffer sizes, a timed soak, post-fix PCM comparison and physical output latency remain unverified.
+- Final full native/managed build and offline tests passed, including frequency regression checks, configuration/ABI checks, audio conversion/buffering, and known/unknown CRI hook restoration. No game files were replaced and no extra gameplay run was performed during finalization.

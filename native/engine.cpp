@@ -140,7 +140,7 @@ void process(long index,ASIOBool,const ASIOTime* time) noexcept {
                 frame.l=frame.r=e.tone[e.tonePhase];e.tonePhase=(e.tonePhase+440)%48000;
             }
         }
-        const auto peak=sa::soft_limit(frame.l,frame.r);
+        const auto peak=sa::soft_limit(frame.l,frame.r,e.options.softLimiter!=0);
         inputPeak=std::max(inputPeak,peak.peak);overRange+=peak.overRange;limited+=peak.limited;invalid+=peak.invalidSamples;
         if(e.options.source==4)frame.l=frame.r=0;
         if(std::fabs(frame.l)>1e-7f||std::fabs(frame.r)>1e-7f)++audibleOutput;
@@ -413,7 +413,7 @@ SA_API int SaInitialize(SaOptions* options) noexcept {
         if(!options||options->size!=sizeof(SaOptions)||options->abi!=ABI)throw std::runtime_error("ABI/options mismatch");
         if(e.state!=0)throw std::runtime_error("Already initialized; restart required");
         if(options->frames&&!sa::supported_buffer(options->frames))throw std::runtime_error("Unsupported buffer size; use 0 for driver preferred size or a documented sample count");
-        if(options->source>4||!options->driver[0]||options->driver[127])throw std::runtime_error("Invalid driver/source");
+        if(options->source>4||options->softLimiter>1||!options->driver[0]||options->driver[127])throw std::runtime_error("Invalid driver/source/soft limiter option");
         e.options=*options;e.ownerThread=GetCurrentThreadId();
         LARGE_INTEGER frequency;QueryPerformanceFrequency(&frequency);e.frequency=frequency.QuadPart;
         for(unsigned i=0;i<48000;++i)e.tone[i]=float(0.01*std::sin(6.283185307179586*i/48000));

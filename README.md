@@ -52,7 +52,7 @@ GitHub 自动生成的 **Source code** 压缩包只有源码，不包含编译�
 
 更详细的构建依赖和开发工具见[从源码构建](#从源码构建)。
 
-升级到 0.2.0 时请同时替换两个 DLL；原生接口已升级至 ABI 6，不可混用旧版文件。
+升级到 0.2.0 时请同时替换两个 DLL；原生接口已升级至 ABI 7，不可混用旧版文件。
 
 ### 复制到游戏目录
 
@@ -68,7 +68,7 @@ GitHub 自动生成的 **Source code** 压缩包只有源码，不包含编译�
 └── SinmaiAsio.toml
 ```
 
-**首次加载会自动在游戏目录生成 `SinmaiAsio.toml`，只复制两个 DLL 即可。** 已有配置不会被覆盖，也不会重新选择驱动。
+**首次加载会自动在游戏目录生成 `SinmaiAsio.toml`，只复制两个 DLL 即可。** 已有配置的值和注释会保留，缺少的选项会自动补齐默认值；不会重新选择已有驱动。格式或选项类型错误时，终端会显示中英双语警告、文件路径和具体原因，提示修正后重启；错误文件不会被覆盖。此提示无需开启 `Diagnostics`。
 
 首次自动选择规则：
 
@@ -76,7 +76,7 @@ GitHub 自动生成的 **Source code** 压缩包只有源码，不包含编译�
 - 没有上述驱动，但只有一个已注册的 64 位 ASIO 驱动：选择并启用该驱动。
 - 没有驱动，或存在多个其他候选：生成禁用配置并记录提示，需手动填写 `Driver` 并启用。
 
-默认使用 48 kHz、输出通道 0 / 1，`BufferSamples = 0` 表示启动时读取 ASIO 驱动报告的首选缓冲大小，并自动匹配 CRI 渲染。只需在驱动面板选择缓冲，无需在 TOML 中重复填写。已有配置不会自动改写；从旧版升级时，将 `BufferSamples` 改成 `0` 即可启用自动模式。需要预先配置时，可复制 `SinmaiAsio.example.toml` 并重命名，也可按照下文手动创建。
+默认使用 48 kHz、输出通道 0 / 1，`BufferSamples = 0` 表示启动时读取 ASIO 驱动报告的首选缓冲大小，并自动匹配 CRI 渲染。只需在驱动面板选择缓冲，无需在 TOML 中重复填写。已有配置的值不会自动调整，缺少的选项会补齐默认值；从旧版升级时，将 `BufferSamples` 改成 `0` 即可启用自动模式。需要预先配置时，可复制 `SinmaiAsio.example.toml` 并重命名，也可按照下文手动创建。
 
 ### 配置并启用
 
@@ -96,6 +96,7 @@ LeftChannel = 0
 RightChannel = 1
 Diagnostics = false
 CaptureOutput = false
+SoftLimiter = false
 ```
 
 | 配置项 | 默认值 | 说明 |
@@ -107,6 +108,7 @@ CaptureOutput = false
 | `RightChannel` | `1` | 右声道输出通道，从 0 开始编号，不能与左声道相同 |
 | `Diagnostics` | `false` | 开启详细日志和统计文件，仅排查问题时使用 |
 | `CaptureOutput` | `false` | 诊断录音：在内存保留最近最多 30 秒 ASIO 输出，收到请求后才保存 WAV |
+| `SoftLimiter` | `false` | 可选软限幅，压缩接近满幅的峰值；修改后重启游戏 |
 
 采样率固定为 48 kHz，不进行实时重采样。目前支持小端 16 / 24 / 32 位整数 PCM，以及 32 / 64 位浮点格式；部分带有效位对齐的整数格式、DSD 和大端格式尚不支持。声卡格式由驱动报告，不支持的格式会明确报错。
 
@@ -124,15 +126,19 @@ Get-ChildItem 'HKLM:\SOFTWARE\ASIO' | Select-Object -ExpandProperty PSChildName
 
 更换声卡不会改变游戏版本限制：游戏程序集和 CRI DLL 仍须匹配当前支持的指纹。
 
-### CRI 内部渲染量子（诊断版本）
+### CRI 处理与渲染
 
-0.2.0 保持声卡缓冲和 CRI 处理频率不变，只把每次内部混音调用的最大量子由 256 改为 32 samples。原有循环仍按 ASIO 需要的采样数填满输出块，不增加播放队列或第二个渲染时钟；代价是内部混音调用更频繁。
+CRI 后台处理频率最低为 750 Hz；小缓冲需要更高频率时，使用 `48000 / BufferSamples`。例如 256 samples 时由原来的 187.5 Hz 提高至 750 Hz，避免后台命令和解码处理频率随声卡缓冲增大而降低。普通启动自动生效，无需增加配置或使用专门的启动脚本。代价是后台处理更频繁，可能增加 CPU 开销。
 
-此版本用于验证录音中反复出现的块尾静音是否与混音块大小有关，效果尚需实机确认。修改只在已校验 DLL 的内存中进行，先核对指令签名，退出后恢复原始字节，不修改磁盘上的游戏 DLL。
+内部混音量子保持 32 samples，输出仍按 ASIO 需要的采样数填满一块，不增加播放队列或第二个渲染时钟。该内存修改仅用于已校验的 CRI DLL，安装前检查指令签名，退出后恢复，不修改磁盘上的游戏 DLL。
 
-### 输出峰值保护
+在 UR22C、48 kHz、256 samples 下，用户提高后台处理频率后连续测试 6 次未复现此前的爆音；此前通常 3～4 次内出现。单独缩小内部混音量子未能解决问题。其他声卡、缓冲大小及长期稳定性仍需验证，详细记录见 [验证记录](docs/validation.md)。
 
-输出转换前启用立体声联动软限幅：两声道峰值不超过 0.90 时保持原样，超过后以平滑曲线压缩，输出峰值上限约为 0.98。左右声道使用相同增益，以保留声道比例；NaN / Infinity 样本替换为零。
+### 输出峰值保护（默认关闭）
+
+设置 `SoftLimiter = true` 并重启游戏后，输出转换前启用立体声联动软限幅：两声道峰值不超过 0.90 时保持原样，超过后以平滑曲线压缩，输出峰值上限约为 0.98。左右声道使用相同增益，以保留声道比例；NaN / Infinity 样本替换为零。
+
+`SoftLimiter` 默认 `false`，旧配置缺少该项时会自动补上 `SoftLimiter = false`；关闭后仍记录峰值和超限次数，`limitedFrames` 为零，并保留格式转换的满幅裁剪与异常样本清理。
 
 该处理不预读、不积攒音频、不增加缓冲块，只增加逐样本计算。它会改变高电平峰值的动态和音色，严重过载时仍可能失真；不能修复欠载、驱动爆音或音源中已经存在的失真。
 
@@ -253,7 +259,15 @@ Get-ChildItem 'HKLM:\SOFTWARE\ASIO' | Select-Object -ExpandProperty PSChildName
 - [原生适配层与线程模型](docs/architecture.md)
 - [验证记录与未覆盖项目](docs/validation.md)
 - `tests/`：原生测试
-- `tools/run-probe.ps1`：开发用 capture / clock 探针，普通启动无需运行
+- `tools/run-probe.ps1`：开发用 capture / clock 探针，或播放模式处理频率对照；普通启动无需运行
+
+开发诊断可保持声卡缓冲不变，仅在单次启动中临时覆盖 CRI 的 `server_frequency`：
+
+```powershell
+.\tools\run-probe.ps1 -GameRoot "D:\Games\Sinmai\Package" -Mode playback -ServerFrequency 750
+```
+
+关闭游戏后再执行。该脚本使用现有 `launch.bat`，只向子进程传递 `SINMAI_ASIO_SERVER_FREQUENCY`，不改写 TOML 或系统环境。普通启动使用最低 750 Hz 的处理频率；开发对照可用 `-ServerFrequency 187.5` 临时恢复旧的 256-sample 对应频率。此参数只调整后台处理频率，并非额外的渲染时钟。诊断统计中的 `configuredServerFrequency` 是提交的配置值，不能替代对原生状态的实测。
 
 ## 卸载
 

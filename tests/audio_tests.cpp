@@ -110,6 +110,11 @@ int main() {
     softLeft=10;softRight=10;sa::soft_limit(softLeft,softRight);
     softLeft=.1f;softRight=-.2f;sa::soft_limit(softLeft,softRight);
     assert(softLeft==.1f&&softRight==-.2f);
+    softLeft=2;softRight=-1;peak=sa::soft_limit(softLeft,softRight,false);
+    assert(softLeft==2&&softRight==-1&&peak.overRange&&!peak.limited&&peak.peak==2);
+    softLeft=std::numeric_limits<float>::quiet_NaN();softRight=.25f;
+    peak=sa::soft_limit(softLeft,softRight,false);
+    assert(softLeft==0&&softRight==.25f&&peak.invalidSamples==1&&!peak.limited);
     unsigned char p[8]{};
     sa::encode(-1,17,p);assert(p[0]==0&&p[1]==0&&p[2]==0x80);
     sa::encode(1,17,p);assert(p[0]==0xff&&p[1]==0xff&&p[2]==0x7f);

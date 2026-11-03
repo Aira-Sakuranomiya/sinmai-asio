@@ -30,14 +30,14 @@ struct PeakResult {
 };
 // Memoryless, stereo-linked soft knee: no lookahead, delay line or dynamic allocation.
 // Below 0.90 the signal is unchanged; above it the peak smoothly approaches 0.98.
-inline PeakResult soft_limit(float& left,float& right) noexcept {
+inline PeakResult soft_limit(float& left,float& right,bool enabled=true) noexcept {
     PeakResult result;
     if(!std::isfinite(left)){left=0;++result.invalidSamples;}
     if(!std::isfinite(right)){right=0;++result.invalidSamples;}
     result.peak=std::max(std::fabs(double(left)),std::fabs(double(right)));
     result.overRange=result.peak>1.0;
     constexpr double knee=0.90,ceiling=0.98,width=ceiling-knee;
-    if(result.peak>knee) {
+    if(enabled&&result.peak>knee) {
         const double target=knee+width*std::tanh((result.peak-knee)/width);
         const double gain=target/result.peak;
         left=float(double(left)*gain);right=float(double(right)*gain);
@@ -45,7 +45,7 @@ inline PeakResult soft_limit(float& left,float& right) noexcept {
     }
     return result;
 }
-// Final encoding retains a defensive clamp; normal playback runs soft_limit first.
+// Final encoding retains a defensive clamp; optional soft limiting runs first.
 // ASIO little-endian, full-width formats only. Aligned/DSD/unknown formats fail closed.
 inline void encode(float value, int type, void* destination) noexcept {
     const double x = std::isfinite(value) ? std::clamp(double(value), -1.0, 1.0) : 0.0;

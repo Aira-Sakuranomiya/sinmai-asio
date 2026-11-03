@@ -25,7 +25,7 @@ int wmain(int argc,wchar_t** argv) {
     assert(SaInitialize(&options)!=0); // ABI rejection must leave the engine uninitialized.
     SaStats stats;memset(&stats,0xa5,sizeof(stats));stats.size=sizeof(stats);stats.abi=999;
     SaStats before=stats;assert(SaGetStats(&stats)!=0);assert(memcmp(&stats,&before,sizeof(stats))==0);
-    options.abi=SA_ABI_VERSION;options.frames=0;assert(SaInitialize(&options)==0);
+    options.abi=SA_ABI_VERSION;options.softLimiter=2;assert(SaInitialize(&options)!=0);options.softLimiter=0;options.frames=0;assert(SaInitialize(&options)==0);
     assert(options.frames==128); // Capture-only mode has no driver and reports its fixed probe default.
     SaStats initial{};initial.size=sizeof(initial);initial.abi=SA_ABI_VERSION;assert(SaGetStats(&initial)==0);
     assert(initial.callbackGapCount==0&&initial.callbackMaxGapUs==0&&initial.validPositionCallbacks==0&&initial.resyncRequests==0&&initial.latencyChangeRequests==0);

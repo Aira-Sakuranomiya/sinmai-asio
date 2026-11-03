@@ -22,6 +22,7 @@ namespace SinmaiAsio {
         static MethodInfo isInitialized,setConfig;
         static object[] configArguments;
         static int bufferSamples;
+        static float serverFrequencyOverride;
         static bool captureEnabled;
         static int captureBusy;
         static string captureNotice,latestStatistics;
@@ -39,6 +40,8 @@ namespace SinmaiAsio {
                 if(!string.IsNullOrEmpty(experiment)&&experiment!="capture"&&experiment!="clock")throw new InvalidOperationException("Unknown SINMAI_ASIO_EXPERIMENT");
                 enabled=settings.Enabled||source!=0;
                 if(!enabled){MelonLogger.Msg("[SinmaiAsio] Disabled / 已禁用");return;}
+                serverFrequencyOverride=Configuration.ParseServerFrequencyOverride(Environment.GetEnvironmentVariable("SINMAI_ASIO_SERVER_FREQUENCY"));
+                if(serverFrequencyOverride>0)MelonLogger.Warning("[SinmaiAsio] 诊断处理频率覆盖 / Diagnostic server frequency override: "+serverFrequencyOverride+" Hz");
                 if(settings.BufferSamples!=0&&settings.BufferSamples!=32&&settings.BufferSamples!=48&&settings.BufferSamples!=64&&settings.BufferSamples!=96&&settings.BufferSamples!=128&&settings.BufferSamples!=192&&settings.BufferSamples!=256&&settings.BufferSamples!=384&&settings.BufferSamples!=512&&settings.BufferSamples!=768&&settings.BufferSamples!=1024&&settings.BufferSamples!=1536&&settings.BufferSamples!=2048)throw new InvalidOperationException("BufferSamples must be 0 (automatic), 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, or 2048");
                 if(settings.LeftChannel<0||settings.RightChannel<0||settings.LeftChannel==settings.RightChannel||string.IsNullOrWhiteSpace(settings.Driver)||settings.Driver.Length>126)throw new InvalidOperationException("Invalid ASIO driver or output channels");
                 string managed=Path.Combine(gameRoot,"Sinmai_Data","Managed");
@@ -68,7 +71,7 @@ namespace SinmaiAsio {
         static void Configure(ref int __9,ref int __10,ref float __12) {
             if(!enabled||failed)return;
             // Verified parameter indices in this pinned game build.
-            __9=48000;__10=2;__12=48000f/(bufferSamples>0?bufferSamples:128);
+            __9=48000;__10=2;__12=Configuration.ProcessingFrequency(bufferSamples,serverFrequencyOverride);
             Diagnostic("CRI configuration: 48000 Hz, 2 channels, serverFrequency="+__12);
         }
         static void Configured(object[] __args) {
@@ -83,7 +86,7 @@ namespace SinmaiAsio {
                     var daemon=Native.GetModuleHandleW("amdaemon_api.dll");
                     if(daemon==IntPtr.Zero)throw new InvalidOperationException("amdaemon_api.dll is not loaded yet; refusing early ASIO driver load");
                     if(daemon.ToInt64()!=0x180000000L)throw new InvalidOperationException("amdaemon_api.dll has been relocated; restart without early-loading ASIO modules");
-                    var options=new Options {Size=(uint)Marshal.SizeOf(typeof(Options)),Abi=Native.Abi,Frames=(uint)settings.BufferSamples,Left=(uint)settings.LeftChannel,Right=(uint)settings.RightChannel,Driver=settings.Driver,Source=source};
+                    var options=new Options {Size=(uint)Marshal.SizeOf(typeof(Options)),Abi=Native.Abi,Frames=(uint)settings.BufferSamples,Left=(uint)settings.LeftChannel,Right=(uint)settings.RightChannel,Driver=settings.Driver,Source=source,SoftLimiter=settings.SoftLimiter?1u:0u};
                     nativeAttempted=true;Native.Check(Native.SaInitialize(ref options));prepared=true;
                     if(settings.CaptureOutput&&source!=3) {
                         try {Native.Check(Native.SaConfigureCapture(30));captureEnabled=true;}
@@ -94,7 +97,7 @@ namespace SinmaiAsio {
                     if(configArguments==null)throw new InvalidOperationException("CRI configuration was not captured before initialization");
                     // Reapply the captured settings only after safely loading ASIO, but before CRI
                     // initialization. Replay through Harmony to retain other mods' config patches.
-                    var arguments=(object[])configArguments.Clone();arguments[12]=48000f/bufferSamples;
+                    var arguments=(object[])configArguments.Clone();arguments[12]=Configuration.ProcessingFrequency(bufferSamples,serverFrequencyOverride);
                     setConfig.Invoke(null,arguments);
                     var info=new StringBuilder(2048);Native.SaGetDriverInfo(info,2048);
                     Diagnostic("Prepared source="+source+" block="+bufferSamples+" ABI sizes="+Marshal.SizeOf(typeof(Options))+"/"+Marshal.SizeOf(typeof(Stats))+" amdaemonBase=0x"+daemon.ToInt64().ToString("X")+" "+info);
@@ -121,8 +124,14 @@ namespace SinmaiAsio {
         }
         static void Failure(Exception ex) {
             if(failed)return;
-            failed=true;problem="Sinmai ASIO 音频已停止，请退出游戏并检查日志。\nAudio stopped. Exit the game and inspect the log.\n"+ex.GetBaseException().Message;
-            MelonLogger.Error("[SinmaiAsio] "+problem+"\n"+ex);
+            failed=true;
+            if(ex is ConfigurationFormatException) {
+                problem=ex.Message;
+                MelonLogger.Warning("[SinmaiAsio] "+problem);
+            } else {
+                problem="Sinmai ASIO 音频已停止，请退出游戏并检查日志。\nAudio stopped. Exit the game and inspect the log.\n"+ex.GetBaseException().Message;
+                MelonLogger.Error("[SinmaiAsio] "+problem+"\n"+ex);
+            }
             if(nativeAttempted){try{Native.SaStop();}catch{}}
         }
         static void SaveOutputCapture() {
@@ -157,6 +166,7 @@ namespace SinmaiAsio {
                     json=json.Substring(0,json.Length-1)+",\"callbackMaxGapUs\":"+Number(s.CallbackMaxGapUs)+",\"callbackMaxGapExcessUs\":"+Number(s.CallbackMaxGapExcessUs)+",\"callbackGapCount\":"+s.CallbackGapCount+",\"callbackGapsOver150Percent\":"+s.CallbackGapsOver150Percent+",\"callbackGapsOver200Percent\":"+s.CallbackGapsOver200Percent+"}";
                     json=json.Substring(0,json.Length-1)+",\"timeInfoCallbacks\":"+s.TimeInfoCallbacks+",\"legacyCallbacks\":"+s.LegacyCallbacks+",\"validPositionCallbacks\":"+s.ValidPositionCallbacks+",\"unavailablePositionCallbacks\":"+s.UnavailablePositionCallbacks+",\"positionDiscontinuities\":"+s.PositionDiscontinuities+",\"positionForwardGapSamples\":"+s.PositionForwardGapSamples+",\"positionBackwardSteps\":"+s.PositionBackwardSteps+",\"positionRepeatedSteps\":"+s.PositionRepeatedSteps+",\"positionShortSteps\":"+s.PositionShortSteps+"}";
                     json=json.Substring(0,json.Length-1)+",\"resyncRequests\":"+s.ResyncRequests+",\"resetRequests\":"+s.ResetRequests+",\"bufferChangeRequests\":"+s.BufferChangeRequests+",\"latencyChangeRequests\":"+s.LatencyChangeRequests+"}";
+                    json=json.Substring(0,json.Length-1)+",\"bufferSamples\":"+bufferSamples+",\"configuredServerFrequency\":"+Number(Configuration.ProcessingFrequency(bufferSamples,serverFrequencyOverride))+",\"serverFrequencyOverride\":"+Number(serverFrequencyOverride)+"}";
                     Interlocked.Exchange(ref latestStatistics,json);
                     Directory.CreateDirectory(Path.GetDirectoryName(statisticsPath));File.WriteAllText(statisticsPath,json);
                     MelonLogger.Msg("[SinmaiAsio] source="+source+" state="+s.State+" fault="+s.Fault+" cri="+s.CriFrames+" audible="+s.Nonzero+" callbacks="+s.Callbacks+" missing="+s.Missing+" queue="+s.Queued+" peak="+s.PeakQueue);

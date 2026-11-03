@@ -17,7 +17,7 @@ if($TestedGameRoot){
     $binaries['Mods\SinmaiAsio.dll']=Join-Path $TestedGameRoot 'Mods\SinmaiAsio.dll'
     $binaries['UserLibs\SinmaiAsio\SinmaiAsio.Native.dll']=Join-Path $TestedGameRoot 'UserLibs\SinmaiAsio\SinmaiAsio.Native.dll'
 }
-$manifest=@{nativeAbi=6;provenance=$(if($TestedGameRoot){'Installed DLL pair; playback and build validation scope is documented in docs/validation.md'}else{'Local build output'});files=@{}}
+$manifest=@{nativeAbi=7;provenance=$(if($TestedGameRoot){'Installed DLL pair; playback and build validation scope is documented in docs/validation.md'}else{'Local build output'});files=@{}}
 foreach($name in $binaries.Keys){
     $destination=Join-Path $folder ('build\'+$name)
     New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
