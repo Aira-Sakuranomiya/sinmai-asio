@@ -31,6 +31,7 @@ namespace SinmaiAsio {
     }
     internal static class Native {
         internal const uint Abi=7;
+        [DllImport("kernel32.dll",SetLastError=true)] internal static extern bool SetConsoleOutputCP(uint codePage);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate int Simple();
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate int Initialize(ref Options options);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate int GetStats(ref Stats stats);

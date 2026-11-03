@@ -5,7 +5,9 @@ using System.Runtime.InteropServices;
 using SinmaiAsio;
 static class ConfigurationTests {
     static void Check(bool condition,string message){if(!condition)throw new Exception(message);}
-    static int Main(){
+    static int Main(string[] args){
+        CompatibilityTests.Run();
+        if(args.Length==1)CompatibilityTests.CheckInstalled(args[0]);
         Check(Native.Abi==7,"Unexpected native ABI");
         Check(Marshal.SizeOf(typeof(Options))==284&&Marshal.SizeOf(typeof(Stats))==1392,"Native ABI struct size mismatch");
         Check(Marshal.OffsetOf(typeof(Stats),"InputPeak").ToInt64()==1216&&Marshal.OffsetOf(typeof(Stats),"InvalidSamples").ToInt64()==1240,"Peak meter field offset mismatch");

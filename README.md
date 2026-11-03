@@ -9,13 +9,13 @@
 | 项目 | 当前支持 / 已验证 |
 | --- | --- |
 | 平台 | Windows x64 |
-| 游戏 | Sinmai DX 1.70 的指定程序集与 CRI DLL |
+| 游戏 | Sinmai DX 1.70；支持音频接口保持兼容的汉化版 Assembly-CSharp |
 | 加载器 | MelonLoader 0.6.4，Mono 游戏 |
 | 已验证声卡 | Yamaha URX22C，Yamaha Steinberg USB ASIO |
 | 输出 | 48 kHz、双声道 |
 | 缓冲 | 32 / 48 / 64 / 96 / 128 / 192 / 256 / 384 / 512 / 768 / 1024 / 1536 / 2048 samples，默认自动跟随驱动 |
 
-当前版本使用固定的 DLL 指纹和原生接口布局。**版本号相同也不代表二进制兼容**；不匹配的程序集或 CRI DLL 会被拒绝加载。已支持的指纹记录在 [dependencies.json](dependencies.json)。其他游戏版本、声卡与驱动尚需单独验证。
+主游戏程序集 `Assembly-CSharp.dll` 按插件实际使用的音频接口检查，不再限制整份文件的哈希，允许汉化等不改变相关接口的修改。`Assembly-CSharp-firstpass.dll` 中的 CRI 桥接实现和原生 `cri_ware_unity.dll` 仍使用严格指纹校验；接口缺失或不匹配时会明确拒绝。支持范围及参考指纹见 [dependencies.json](dependencies.json)。这不代表支持任意游戏版本；其他游戏版本、声卡与驱动仍需单独验证。
 
 插件不按声卡型号分别编译。**同一份 Windows x64 DLL 可以通过配置选择其他 ASIO 驱动，无需为换声卡重新编译。** 目前只对 URX22C 做过实机验证，其他设备能否使用取决于驱动的采样率、缓冲和输出格式支持。
 
@@ -124,7 +124,7 @@ Get-ChildItem 'HKLM:\SOFTWARE\ASIO' | Select-Object -ExpandProperty PSChildName
 
 将目标名称填入 `Driver`，在驱动面板中设置 48 kHz，并选择驱动支持的 `32`、`48`、`64`、`96`、`128`、`192`、`256`、`384`、`512`、`768`、`1024`、`1536` 或 `2048` samples。`BufferSamples = 0` 时会自动跟随启动时驱动报告的首选值；手动指定时需匹配驱动设置。`LeftChannel` / `RightChannel` 必须是有效且不同的输出通道。
 
-更换声卡不会改变游戏版本限制：游戏程序集和 CRI DLL 仍须匹配当前支持的指纹。
+更换声卡不会改变游戏兼容要求：主程序集音频接口必须匹配，CRI 桥接程序集和原生 DLL 必须通过指纹校验。
 
 ### CRI 处理与渲染
 

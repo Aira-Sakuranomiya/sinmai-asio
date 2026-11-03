@@ -26,8 +26,10 @@ namespace SinmaiAsio {
         static bool captureEnabled;
         static int captureBusy;
         static string captureNotice,latestStatistics;
-        const string GameHash="DC0E46A4133D4EE4781BA6DEB2FE30063DD3F82EE91C31A5A8A7E61E644D9446";
         public override void OnEarlyInitializeMelon() {
+            // MelonLoader writes UTF-8; keep the console decoder and managed writer aligned.
+            try {Console.OutputEncoding=new UTF8Encoding(false);Native.SetConsoleOutputCP(65001);}
+            catch(Exception ex){MelonLogger.Warning("[SinmaiAsio] Cannot configure UTF-8 console output: "+ex.Message);}
             gameRoot=Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName);
             statisticsPath=Path.Combine(gameRoot,"UserData","SinmaiAsio.stats.json");
             try {
@@ -44,17 +46,20 @@ namespace SinmaiAsio {
                 if(serverFrequencyOverride>0)MelonLogger.Warning("[SinmaiAsio] 诊断处理频率覆盖 / Diagnostic server frequency override: "+serverFrequencyOverride+" Hz");
                 if(settings.BufferSamples!=0&&settings.BufferSamples!=32&&settings.BufferSamples!=48&&settings.BufferSamples!=64&&settings.BufferSamples!=96&&settings.BufferSamples!=128&&settings.BufferSamples!=192&&settings.BufferSamples!=256&&settings.BufferSamples!=384&&settings.BufferSamples!=512&&settings.BufferSamples!=768&&settings.BufferSamples!=1024&&settings.BufferSamples!=1536&&settings.BufferSamples!=2048)throw new InvalidOperationException("BufferSamples must be 0 (automatic), 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, or 2048");
                 if(settings.LeftChannel<0||settings.RightChannel<0||settings.LeftChannel==settings.RightChannel||string.IsNullOrWhiteSpace(settings.Driver)||settings.Driver.Length>126)throw new InvalidOperationException("Invalid ASIO driver or output channels");
-                string managed=Path.Combine(gameRoot,"Sinmai_Data","Managed");
-                if(FileHash(Path.Combine(managed,"Assembly-CSharp.dll"))!=GameHash)throw new InvalidOperationException("Unsupported game assembly; only the validated 1.70 profile is allowed");
                 var first=Assembly.Load("Assembly-CSharp-firstpass");var game=Assembly.Load("Assembly-CSharp");
+                if(FileHash(first.Location)!=Compatibility.CriBridgeHash)throw new InvalidOperationException("Unsupported managed CRI bridge: Assembly-CSharp-firstpass.dll does not match the validated profile");
+                var atom=first.GetType("CriAtomPlugin",false);
+                var wasapi=game.GetType("Manager.WasapiExclusive",false);
+                // Check every managed hook before installing any of them. Localized game text
+                // can change Assembly-CSharp without changing this audio contract.
+                Compatibility.Validate(atom,wasapi);
                 bufferSamples=settings.BufferSamples;
-                var atom=first.GetType("CriAtomPlugin",true);
                 setConfig=AccessTools.Method(atom,"SetConfigParameters");
                 isInitialized=AccessTools.Method(atom,"IsLibraryInitialized");
                 Patch(atom,"SetConfigParameters","Configure","Configured");
                 Patch(atom,"InitializeLibrary","BeforeInitialize","AfterInitialize");
                 Patch(atom,"FinalizeLibrary","BeforeFinalize","AfterFinalize");
-                Patch(game.GetType("Manager.WasapiExclusive",true),"Intialize","SkipWasapi",null);
+                Patch(wasapi,"Intialize","SkipWasapi",null);
                 // Load by full path. Native binary uses the static MSVC runtime.
                 if(Native.LoadLibraryW(Path.Combine(gameRoot,"Sinmai_Data","Plugins","cri_ware_unity.dll"))==IntPtr.Zero)throw new InvalidOperationException("Cannot load CRI library");
                 Native.Bind(Path.Combine(gameRoot,"UserLibs","SinmaiAsio","SinmaiAsio.Native.dll"));

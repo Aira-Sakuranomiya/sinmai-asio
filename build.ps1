@@ -77,7 +77,7 @@ $configurationTests=Join-Path $out 'configuration-tests.exe'
 $testArgs=@('/nologo','/noconfig','/target:exe','/platform:x64','/optimize+','/nostdlib+',('/out:'+$configurationTests))
 foreach($dll in @('mscorlib.dll','System.dll','System.Core.dll')){$testArgs+=('/reference:'+(Join-Path $framework $dll))}
 $testArgs+=('/reference:'+(Join-Path $refs 'Tomlet.dll'))
-$testArgs+=@((Join-Path $root 'managed\Configuration.cs'),(Join-Path $root 'managed\Native.cs'),(Join-Path $root 'tests\configuration_tests.cs'))
+$testArgs+=@((Join-Path $root 'managed\Configuration.cs'),(Join-Path $root 'managed\Native.cs'),(Join-Path $root 'managed\Compatibility.cs'),(Join-Path $root 'tests\compatibility_tests.cs'),(Join-Path $root 'tests\configuration_tests.cs'))
 & $csc @testArgs
 if($LASTEXITCODE -ne 0){throw 'Configuration tests build failed'}
 Copy-Item -LiteralPath (Join-Path $refs 'Tomlet.dll') -Destination $out -Force

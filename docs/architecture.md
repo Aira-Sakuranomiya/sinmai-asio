@@ -1,7 +1,7 @@
 # Native adapter profile and invariants
 
 This is an experimental, hash-pinned adapter, not a general CRI SDK binding.
-Only the exact `game` fingerprints in `dependencies.json` are accepted. Addresses below are RVAs,
+The native CRI DLL and managed CRI bridge must match the `game` fingerprints in `dependencies.json`. The main Assembly-CSharp hash is reference information only: localized variants are accepted when the required managed audio contract matches. Before any Harmony hooks are installed, exact static method signatures, unambiguous names, managed bodies and the Int32 initialization counter are checked. Native addresses below are RVAs,
 resolved against the loaded module, never absolute addresses in the game process.
 
 | RVA / layout | Verified use |
